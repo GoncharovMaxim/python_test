@@ -49,6 +49,8 @@ services:
   worker:
     <<: *app
     command: ["python", "-m", "app.worker"]
+    # SIGTERM stops claiming new jobs and lets in-flight LLM calls (<= 30 s) finish.
+    stop_grace_period: 40s
     environment:
       <<: *app-env
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
