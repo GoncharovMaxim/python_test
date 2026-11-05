@@ -1,0 +1,207 @@
+"""Ticket use-cases shared by the webhook, the operator API and the UI.
+
+Every status transition is a conditional UPDATE (`WHERE status = <expected>`), so double
+clicks, concurrent operators and late workers can't move a ticket through a step twice.
+"""
+
+from dataclasses import dataclass
+
+from sqlalchemy import func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app import queue
+from app.config import Settings
+from app.models import JobKind, Ticket, TicketStatus
+
+
+class TicketNotFound(LookupError):
+    pass
+
+
+class InvalidTransition(RuntimeError):
+    def __init__(self, ticket_id: int, action: str, status: str):
+        super().__init__(f"cannot {action} ticket {ticket_id} in status '{status}'")
+        self.ticket_id = ticket_id
+        self.action = action
+        self.status = status
+
+
+@dataclass(frozen=True)
+class IncomingEvent:
+    event_id: str
+    ticket_id: str
+    customer_email: str
+    message: str
+    reply_url: str
+
+
+async def ingest_event(session: AsyncSession, event: IncomingEvent, settings: Settings) -> bool:
+    """Store the ticket and its generation job atomically. Returns False for duplicates.
+
+    Concurrent deliveries of the same event serialize on the unique index: the second one
+    waits for the first to commit and then inserts nothing.
+    """
+    # Never hold the webhook longer than the helpdesk is willing to wait (2 s).
+    await session.execute(text("SET LOCAL statement_timeout = '1500ms'"))
+    stmt = (
+        pg_insert(Ticket)
+        .values(
+            event_id=event.event_id,
+            external_ticket_id=event.ticket_id,
+            customer_email=event.customer_email,
+            message=event.message,
+            reply_url=event.reply_url,
+            status=TicketStatus.NEW,
+        )
+        .on_conflict_do_nothing(index_elements=[Ticket.event_id])
+        .returning(Ticket.id)
+    )
+    ticket_id = (await session.execute(stmt)).scalar_one_or_none()
+    if ticket_id is not None:
+        await queue.enqueue(
+            session,
+            kind=JobKind.GENERATE_DRAFT,
+            ticket_id=ticket_id,
+            max_attempts=settings.generation_max_attempts,
+        )
+    await session.commit()
+    return ticket_id is not None
+
+
+async def _transition(
+    session: AsyncSession,
+    ticket_id: int,
+    action: str,
+    expected: TicketStatus | tuple[TicketStatus, ...],
+    values: dict,
+) -> None:
+    allowed = expected if isinstance(expected, tuple) else (expected,)
+    result = await session.execute(
+        update(Ticket)
+        .where(Ticket.id == ticket_id, Ticket.status.in_(allowed))
+        .values(updated_at=func.now(), **values)
+        .returning(Ticket.id)
+    )
+    if result.scalar_one_or_none() is None:
+        await session.rollback()
+        status = await session.scalar(select(Ticket.status).where(Ticket.id == ticket_id))
+        if status is None:
+            raise TicketNotFound(ticket_id)
+        raise InvalidTransition(ticket_id, action, status)
+
+
+async def approve(
+    session: AsyncSession, ticket_id: int, settings: Settings, text_override: str | None = None
+) -> None:
+    """Approve the draft (optionally edited by the operator) and queue it for sending."""
+    reply_text = text_override.strip() if text_override is not None else None
+    if text_override is not None and not reply_text:
+        raise ValueError("reply text must not be empty")
+    await _transition(
+        session,
+        ticket_id,
+        "approve",
+        TicketStatus.DRAFT_READY,
+        {
+            "status": TicketStatus.APPROVED,
+            "reply_text": reply_text if reply_text is not None else Ticket.draft_text,
+            # One key per reply, kept for every retry: the helpdesk dedups on it.
+            "reply_idempotency_key": func.coalesce(
+                Ticket.reply_idempotency_key, func.gen_random_uuid()
+            ),
+            "approved_at": func.now(),
+            "last_error": None,
+        },
+    )
+    await queue.enqueue(
+        session,
+        kind=JobKind.SEND_REPLY,
+        ticket_id=ticket_id,
+        max_attempts=settings.send_max_attempts,
+    )
+    await session.commit()
+
+
+async def reject(session: AsyncSession, ticket_id: int, reason: str | None = None) -> None:
+    await _transition(
+        session,
+        ticket_id,
+        "reject",
+        TicketStatus.DRAFT_READY,
+        {
+            "status": TicketStatus.REJECTED,
+            "rejection_reason": (reason or "").strip() or None,
+            "rejected_at": func.now(),
+        },
+    )
+    await session.commit()
+
+
+async def regenerate(session: AsyncSession, ticket_id: int, settings: Settings) -> None:
+    """Ask for a fresh draft. Not allowed once a reply was approved (it may be delivered)."""
+    await _transition(
+        session,
+        ticket_id,
+        "regenerate",
+        (TicketStatus.DRAFT_READY, TicketStatus.REJECTED, TicketStatus.GENERATION_FAILED),
+        {
+            "status": TicketStatus.NEW,
+            "draft_text": None,
+            "draft_sources": [],
+            "draft_model": None,
+            "draft_generated_at": None,
+            "rejection_reason": None,
+            "rejected_at": None,
+            "last_error": None,
+        },
+    )
+    await queue.enqueue(
+        session,
+        kind=JobKind.GENERATE_DRAFT,
+        ticket_id=ticket_id,
+        max_attempts=settings.generation_max_attempts,
+    )
+    await session.commit()
+
+
+async def retry_send(session: AsyncSession, ticket_id: int, settings: Settings) -> None:
+    """Re-queue a failed delivery. The idempotency key stays the same, so a reply that
+    actually reached the helpdesk earlier will not be duplicated."""
+    await _transition(
+        session,
+        ticket_id,
+        "retry sending",
+        TicketStatus.SEND_FAILED,
+        {"status": TicketStatus.APPROVED, "last_error": None},
+    )
+    await queue.enqueue(
+        session,
+        kind=JobKind.SEND_REPLY,
+        ticket_id=ticket_id,
+        max_attempts=settings.send_max_attempts,
+    )
+    await session.commit()
+
+
+async def get_ticket(session: AsyncSession, ticket_id: int) -> Ticket:
+    ticket = await session.get(Ticket, ticket_id)
+    if ticket is None:
+        raise TicketNotFound(ticket_id)
+    return ticket
+
+
+async def list_tickets(
+    session: AsyncSession, status: TicketStatus | None = None, limit: int = 100
+) -> list[Ticket]:
+    stmt = select(Ticket).order_by(Ticket.created_at.desc(), Ticket.id.desc()).limit(limit)
+    if status is not None:
+        stmt = stmt.where(Ticket.status == status)
+    return list((await session.scalars(stmt)).all())
+
+
+async def count_by_status(session: AsyncSession) -> dict[str, int]:
+    rows = await session.execute(select(Ticket.status, func.count()).group_by(Ticket.status))
+    counts = {s.value: 0 for s in TicketStatus}
+    counts.update({status: n for status, n in rows.all()})
+    return counts

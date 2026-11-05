@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Звернення · ЗвітХаб підтримка</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 980px; padding: 16px; color: #222; }
+    h1 { font-size: 1.4rem; margin: 0 0 12px; }
+    nav a { margin-right: 10px; text-decoration: none; }
+    nav a.active { font-weight: bold; text-decoration: underline; }
+    .flash { padding: 8px 12px; margin: 12px 0; border-radius: 4px; }
+    .flash.ok { background: #e7f6e7; } .flash.err { background: #fde8e8; }
+    .ticket { border: 1px solid #ccc; border-radius: 6px; padding: 12px; margin: 12px 0; }
+    .meta { font-size: .85rem; color: #555; }
+    .status { display: inline-block; padding: 1px 8px; border-radius: 10px; background: #eee; font-size: .8rem; }
+    .status-draft_ready { background: #fff3c4; } .status-sent { background: #d9f2d9; }
+    .status-generation_failed, .status-send_failed { background: #f8d4d4; } .status-rejected { background: #e3e3e3; }
+    .message { white-space: pre-wrap; background: #f6f6f6; padding: 8px; border-radius: 4px; }
+    textarea { width: 100%; box-sizing: border-box; font: inherit; }
+    pre.reply { white-space: pre-wrap; font: inherit; background: #f6fbff; padding: 8px; border-radius: 4px; }
+    .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+    .error { color: #a00; font-size: .85rem; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Звернення в підтримку</h1>
+  <nav>
+    <a href="/ui/tickets" class="{{ 'active' if not selected }}">Усі ({{ total }})</a>
+    {% for s in statuses %}
+      <a href="/ui/tickets?status={{ s.value }}" class="{{ 'active' if selected == s }}">{{ labels[s] }} ({{ counts[s.value] }})</a>
+    {% endfor %}
+  </nav>
+
+  {% if notice %}<div class="flash ok">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+
+  {% for t in tickets %}
+  <div class="ticket" id="t{{ t.id }}">
+    <div class="meta">
+      #{{ t.id }} · тікет <b>{{ t.external_ticket_id }}</b> · {{ t.customer_email }} ·
+      {{ t.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC ·
+      <span class="status status-{{ t.status }}">{{ labels[t.status] }}</span>
+      {% if t.draft_model %} · модель: {{ t.draft_model }}{% endif %}
+    </div>
+    <p class="message">{{ t.message }}</p>
+
+    {% if t.status == 'draft_ready' %}
+      <form method="post" action="/ui/tickets/{{ t.id }}/approve">
+        <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+        <label>Чернетка (можна редагувати перед надсиланням):</label>
+        <textarea name="text" rows="12" required>{{ t.draft_text }}</textarea>
+        <div class="actions"><button type="submit">✅ Підтвердити й надіслати</button></div>
+      </form>
+      <div class="actions">
+        <form method="post" action="/ui/tickets/{{ t.id }}/reject" class="actions">
+          <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+          <input name="reason" placeholder="Причина відхилення (необов'язково)" size="40">
+          <button type="submit">❌ Відхилити</button>
+        </form>
+        <form method="post" action="/ui/tickets/{{ t.id }}/regenerate">
+          <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+          <button type="submit">🔄 Згенерувати знову</button>
+        </form>
+      </div>
+    {% elif t.status in ('approved', 'sent', 'send_failed') %}
+      <pre class="reply">{{ t.reply_text }}</pre>
+      {% if t.sent_at %}<div class="meta">Надіслано: {{ t.sent_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</div>{% endif %}
+    {% elif t.status == 'rejected' %}
+      <pre class="reply">{{ t.draft_text }}</pre>
+      {% if t.rejection_reason %}<div class="meta">Причина: {{ t.rejection_reason }}</div>{% endif %}
+    {% endif %}
+
+    {% if t.last_error %}<div class="error">Остання помилка: {{ t.last_error }}</div>{% endif %}
+
+    {% if t.status in ('rejected', 'generation_failed') %}
+      <form method="post" action="/ui/tickets/{{ t.id }}/regenerate" class="actions">
+        <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+        <button type="submit">🔄 Згенерувати знову</button>
+      </form>
+    {% elif t.status == 'send_failed' %}
+      <form method="post" action="/ui/tickets/{{ t.id }}/retry-send" class="actions">
+        <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+        <button type="submit">📤 Повторити надсилання</button>
+      </form>
+    {% endif %}
+  </div>
+  {% else %}
+    <p>Звернень немає.</p>
+  {% endfor %}
+
+  <script>
+    // Auto-refresh every 10 s unless the operator is typing.
+    let dirty = false;
+    document.addEventListener('input', () => { dirty = true; });
+    setInterval(() => {
+      const el = document.activeElement;
+      const typing = el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT');
+      if (!dirty && !typing) location.reload();
+    }, 10000);
+  </script>
+</body>
+</html>

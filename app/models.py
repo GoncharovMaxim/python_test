@@ -56,7 +56,9 @@ class Ticket(Base):
     """One incoming helpdesk event (deduplicated by `event_id`) and its reply lifecycle."""
 
     __tablename__ = "tickets"
-    __table_args__ = (CheckConstraint(_one_of("status", TicketStatus), name="tickets_status_check"),)
+    __table_args__ = (
+        CheckConstraint(_one_of("status", TicketStatus), name="tickets_status_check"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     event_id: Mapped[str] = mapped_column(String(255), unique=True)
@@ -114,9 +116,7 @@ class Job(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     kind: Mapped[str] = mapped_column(String(32))
-    ticket_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tickets.id", ondelete="CASCADE")
-    )
+    ticket_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tickets.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(String(16), default=JobStatus.QUEUED)
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     max_attempts: Mapped[int] = mapped_column(Integer)

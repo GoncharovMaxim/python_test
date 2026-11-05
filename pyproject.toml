@@ -10,7 +10,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
-ignore = ["RUF001", "RUF002", "RUF003"]  # Cyrillic text is intentional
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # Cyrillic text is intentional
+    "SIM905",  # word lists are easier to maintain as """...""".split()
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Helpdesk mock</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 980px; padding: 16px; color: #222; }
+    section { border: 1px solid #ccc; border-radius: 6px; padding: 12px; margin: 12px 0; }
+    h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 0; }
+    table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+    td, th { border-bottom: 1px solid #eee; padding: 4px 6px; text-align: left; vertical-align: top; }
+    .msg { white-space: pre-wrap; }
+    .bad { color: #a00; font-weight: bold; }
+    textarea { width: 100%; box-sizing: border-box; font: inherit; }
+    code { background: #f3f3f3; padding: 0 4px; }
+  </style>
+</head>
+<body>
+  <h1>Мок хелпдеску</h1>
+  <p>Вебхук сервісу: <code>{{ webhook_url }}</code> · Модерація: <a href="http://localhost:8000/ui/tickets">http://localhost:8000/ui/tickets</a></p>
+
+  <section>
+    <h2>Нове звернення</h2>
+    <form method="post" action="/ui/ticket">
+      <textarea name="message" rows="3" placeholder="Текст звернення (порожньо = випадковий приклад)"></textarea>
+      <label>Частка дублікатів доставки: <input name="duplicate_rate" type="number" step="0.1" min="0" max="1" value="0.5"></label>
+      <button type="submit">Надіслати вебхук</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Пік навантаження</h2>
+    <form method="post" action="/ui/burst">
+      <label>Звернень: <input name="count" type="number" min="1" max="5000" value="50"></label>
+      <label>Розподілити на, с: <input name="spread_seconds" type="number" min="0" max="3600" value="0"></label>
+      <label>Частка дублікатів: <input name="duplicate_rate" type="number" step="0.1" min="0" max="1" value="0.3"></label>
+      <button type="submit">Запустити</button>
+    </form>
+    <p>Специфікація: до 500 звернень за 10 хвилин, тобто 500 і 600 с.</p>
+  </section>
+
+  <section>
+    <h2>Поведінка Reply API</h2>
+    <form method="post" action="/ui/config">
+      <label>5xx (не зберігає): <input name="reply_fail_rate" type="number" step="0.05" min="0" max="1" value="{{ config.reply_fail_rate }}"></label>
+      <label>Зберігає, але відповідь губиться: <input name="reply_lost_response_rate" type="number" step="0.05" min="0" max="1" value="{{ config.reply_lost_response_rate }}"></label>
+      <label>Зависання, с: <input name="reply_hang_seconds" type="number" step="1" min="0" max="120" value="{{ config.reply_hang_seconds }}"></label>
+      <button type="submit">Зберегти</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Статистика</h2>
+    <table>
+      {% for k, v in stats.items() %}
+        <tr><td>{{ k }}</td><td class="{{ 'bad' if k == 'duplicate_messages' and v }}">{{ v }}</td></tr>
+      {% else %}
+        <tr><td>Поки порожньо</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>Відповіді клієнтам (останні 50)</h2>
+    <table>
+      <tr><th>Тікет</th><th>Отримано</th><th>Повідомлення</th></tr>
+      {% for r in replies %}
+        <tr><td>{{ r.ticket_id }}</td><td>{{ r.received_at }}</td><td class="msg">{{ r.message }}</td></tr>
+      {% else %}
+        <tr><td colspan="3">Ще немає</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>Надіслані звернення (останні 50)</h2>
+    <table>
+      <tr><th>Подія</th><th>Тікет</th><th>Повідомлення</th></tr>
+      {% for e in events %}
+        <tr><td>{{ e.event_id }}</td><td>{{ e.ticket_id }}</td><td class="msg">{{ e.message }}</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+</body>
+</html>

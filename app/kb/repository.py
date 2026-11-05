@@ -42,7 +42,9 @@ async def sync_articles(
             set_={**{k: stmt.excluded[k] for k in values if k != "slug"}, "updated_at": func.now()},
         )
         await session.execute(stmt)
-    await session.execute(delete(KbArticle).where(KbArticle.slug.not_in([a.slug for a in articles])))
+    await session.execute(
+        delete(KbArticle).where(KbArticle.slug.not_in([a.slug for a in articles]))
+    )
 
 
 _SEARCH_SQL = text(
