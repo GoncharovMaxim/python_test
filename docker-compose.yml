@@ -1,0 +1,88 @@
+x-app: &app
+  build:
+    context: .
+    target: runtime
+  image: support-drafts:latest
+  environment: &app-env
+    DATABASE_URL: postgresql+asyncpg://support:support@db:5432/support
+    REPLY_URL_ALLOWED_HOSTS: helpdesk-mock,helpdesk.example.com
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: support
+      POSTGRES_PASSWORD: support
+      POSTGRES_DB: support
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U support -d support"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # One-shot: apply migrations and (re)load the knowledge base.
+  migrate:
+    <<: *app
+    command: ["sh", "-c", "alembic upgrade head && python -m app.kb.seed"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *app-env
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-claude-opus-5-5}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  helpdesk-mock:
+    <<: *app
+    command: ["uvicorn", "helpdesk_mock.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      MOCK_WEBHOOK_URL: http://api:8000/webhooks/helpdesk
+      MOCK_PUBLIC_BASE_URL: http://helpdesk-mock:8001
+      MOCK_REPLY_FAIL_RATE: ${MOCK_REPLY_FAIL_RATE:-0.2}
+      MOCK_REPLY_LOST_RESPONSE_RATE: ${MOCK_REPLY_LOST_RESPONSE_RATE:-0.1}
+    ports:
+      - "8001:8001"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # docker compose --profile test run --rm tests
+  tests:
+    build:
+      context: .
+      target: dev
+    profiles: ["test"]
+    environment:
+      TEST_DATABASE_URL: postgresql+asyncpg://support:support@db:5432/support_test
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

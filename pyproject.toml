@@ -1,0 +1,19 @@
+[project]
+name = "support-drafts"
+version = "0.1.0"
+description = "LLM-drafted support replies with operator moderation"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # Cyrillic text is intentional
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
