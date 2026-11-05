@@ -2,7 +2,6 @@ x-app: &app
   build:
     context: .
     target: runtime
-  image: support-drafts:latest
   environment: &app-env
     DATABASE_URL: postgresql+asyncpg://support:support@db:5432/support
     REPLY_URL_ALLOWED_HOSTS: helpdesk-mock,helpdesk.example.com
