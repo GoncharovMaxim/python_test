@@ -1,5 +1,6 @@
 """Minimal server-rendered operator UI."""
 
+import math
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -13,6 +14,8 @@ from app.web.deps import SessionDep, SettingsDep
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+
+PAGE_SIZE = 50
 
 STATUS_LABELS = {
     TicketStatus.NEW: "Генерується чернетка",
@@ -32,20 +35,38 @@ NOTICES = {
 }
 
 
-def _back(status: str | None, **params: str) -> RedirectResponse:
-    query = {k: v for k, v in {"status": status or "", **params}.items() if v}
-    url = "/ui/tickets" + (f"?{urlencode(query)}" if query else "")
-    return RedirectResponse(url, status_code=303)
+def _parse_page(raw: str | None) -> int:
+    try:
+        return max(int(raw or 1), 1)
+    except ValueError:
+        return 1
 
 
-async def _run(action_name: str, coro, status: str | None) -> RedirectResponse:
+def list_url(status: str | None, page: int | str | None = None, **params: str) -> str:
+    """URL of the ticket list that keeps the status filter and the page."""
+    page_number = _parse_page(str(page) if page is not None else None)
+    query = {
+        "status": status or "",
+        "page": str(page_number) if page_number > 1 else "",
+        **params,
+    }
+    query = {k: v for k, v in query.items() if v}
+    return "/ui/tickets" + (f"?{urlencode(query)}" if query else "")
+
+
+def _back(status: str | None, page: str | None, **params: str) -> RedirectResponse:
+    return RedirectResponse(list_url(status, page, **params), status_code=303)
+
+
+async def _run(action_name: str, coro, status: str | None, page: str | None) -> RedirectResponse:
     try:
         await coro
     except tickets.TicketNotFound:
-        return _back(status, error="Звернення не знайдено.")
+        return _back(status, page, error="Звернення не знайдено.")
     except tickets.StaleDraft:
         return _back(
             status,
+            page,
             error=(
                 "Чернетку змінено, поки сторінка була відкрита: згенеровано нову версію. "
                 "Оновіть сторінку й перевірте текст перед підтвердженням."
@@ -53,10 +74,10 @@ async def _run(action_name: str, coro, status: str | None) -> RedirectResponse:
         )
     except tickets.InvalidTransition as exc:
         label = STATUS_LABELS.get(TicketStatus(exc.status), exc.status)
-        return _back(status, error=f"Дію не виконано: звернення вже має статус «{label}».")
+        return _back(status, page, error=f"Дію не виконано: звернення вже має статус «{label}».")
     except ValueError as exc:
-        return _back(status, error=str(exc))
-    return _back(status, notice=NOTICES[action_name])
+        return _back(status, page, error=str(exc))
+    return _back(status, page, notice=NOTICES[action_name])
 
 
 @router.get("/")
@@ -69,19 +90,32 @@ async def tickets_page(
     request: Request,
     session: SessionDep,
     status: str | None = None,
+    page: str | None = None,
     notice: str | None = None,
     error: str | None = None,
 ):
     selected = TicketStatus(status) if status in TicketStatus._value2member_map_ else None
-    items = await tickets.list_tickets(session, selected, limit=100)
+    status_value = selected.value if selected else None
     counts = await tickets.count_by_status(session)
+    total = sum(counts.values())
+    matching = counts[selected.value] if selected else total
+    pages = max(math.ceil(matching / PAGE_SIZE), 1)
+    current = min(_parse_page(page), pages)  # e.g. the last page emptied by an action
+    items = await tickets.list_tickets(
+        session, selected, limit=PAGE_SIZE, offset=(current - 1) * PAGE_SIZE
+    )
     return templates.TemplateResponse(
         request,
         "tickets.html",
         {
             "tickets": items,
             "counts": counts,
-            "total": sum(counts.values()),
+            "total": total,
+            "matching": matching,
+            "page": current,
+            "pages": pages,
+            "prev_url": list_url(status_value, current - 1) if current > 1 else None,
+            "next_url": list_url(status_value, current + 1) if current < pages else None,
             "selected": selected,
             "labels": STATUS_LABELS,
             "statuses": list(TicketStatus),
@@ -99,9 +133,13 @@ async def approve(
     text: str = Form(...),
     draft_version: int = Form(...),
     status: str | None = Form(None),
+    page: str | None = Form(None),
 ):
     return await _run(
-        "approve", tickets.approve(session, ticket_id, settings, text, draft_version), status
+        "approve",
+        tickets.approve(session, ticket_id, settings, text, draft_version),
+        status,
+        page,
     )
 
 
@@ -111,19 +149,28 @@ async def reject(
     session: SessionDep,
     reason: str = Form(""),
     status: str | None = Form(None),
+    page: str | None = Form(None),
 ):
-    return await _run("reject", tickets.reject(session, ticket_id, reason), status)
+    return await _run("reject", tickets.reject(session, ticket_id, reason), status, page)
 
 
 @router.post("/ui/tickets/{ticket_id}/regenerate")
 async def regenerate(
-    ticket_id: int, session: SessionDep, settings: SettingsDep, status: str | None = Form(None)
+    ticket_id: int,
+    session: SessionDep,
+    settings: SettingsDep,
+    status: str | None = Form(None),
+    page: str | None = Form(None),
 ):
-    return await _run("regenerate", tickets.regenerate(session, ticket_id, settings), status)
+    return await _run("regenerate", tickets.regenerate(session, ticket_id, settings), status, page)
 
 
 @router.post("/ui/tickets/{ticket_id}/retry-send")
 async def retry_send(
-    ticket_id: int, session: SessionDep, settings: SettingsDep, status: str | None = Form(None)
+    ticket_id: int,
+    session: SessionDep,
+    settings: SettingsDep,
+    status: str | None = Form(None),
+    page: str | None = Form(None),
 ):
-    return await _run("retry_send", tickets.retry_send(session, ticket_id, settings), status)
+    return await _run("retry_send", tickets.retry_send(session, ticket_id, settings), status, page)

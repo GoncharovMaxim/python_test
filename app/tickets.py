@@ -227,9 +227,15 @@ async def get_ticket(session: AsyncSession, ticket_id: int) -> Ticket:
 
 
 async def list_tickets(
-    session: AsyncSession, status: TicketStatus | None = None, limit: int = 100
+    session: AsyncSession, status: TicketStatus | None = None, limit: int = 100, offset: int = 0
 ) -> list[Ticket]:
-    stmt = select(Ticket).order_by(Ticket.created_at.desc(), Ticket.id.desc()).limit(limit)
+    """Newest first; `id` breaks ties so pages never overlap or skip rows."""
+    stmt = (
+        select(Ticket)
+        .order_by(Ticket.created_at.desc(), Ticket.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     if status is not None:
         stmt = stmt.where(Ticket.status == status)
     return list((await session.scalars(stmt)).all())

@@ -22,6 +22,7 @@
     .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
     .error { color: #a00; font-size: .85rem; }
     button { cursor: pointer; }
+    .pager { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
   </style>
 </head>
 <body>
@@ -36,6 +37,19 @@
   {% if notice %}<div class="flash ok">{{ notice }}</div>{% endif %}
   {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 
+  {# Hidden fields that bring the operator back to the same filter and page after an action. #}
+  {% set keep_view %}<input type="hidden" name="status" value="{{ selected.value if selected else '' }}"><input type="hidden" name="page" value="{{ page }}">{% endset %}
+  {% macro pager() %}
+    {% if pages > 1 %}
+    <div class="pager">
+      {% if prev_url %}<a href="{{ prev_url }}" rel="prev">← Новіші</a>{% endif %}
+      <span>Сторінка {{ page }} з {{ pages }} ({{ matching }} звернень)</span>
+      {% if next_url %}<a href="{{ next_url }}" rel="next">Старіші →</a>{% endif %}
+    </div>
+    {% endif %}
+  {% endmacro %}
+
+  {{ pager() }}
   {% for t in tickets %}
   <div class="ticket" id="t{{ t.id }}">
     <div class="meta">
@@ -48,7 +62,7 @@
 
     {% if t.status == 'draft_ready' %}
       <form method="post" action="/ui/tickets/{{ t.id }}/approve">
-        <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+        {{ keep_view }}
         <input type="hidden" name="draft_version" value="{{ t.draft_version }}">
         <label>Чернетка (можна редагувати перед надсиланням):</label>
         <textarea name="text" rows="12" required>{{ t.draft_text }}</textarea>
@@ -56,12 +70,12 @@
       </form>
       <div class="actions">
         <form method="post" action="/ui/tickets/{{ t.id }}/reject" class="actions">
-          <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+          {{ keep_view }}
           <input name="reason" placeholder="Причина відхилення (необов'язково)" size="40">
           <button type="submit">❌ Відхилити</button>
         </form>
         <form method="post" action="/ui/tickets/{{ t.id }}/regenerate">
-          <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+          {{ keep_view }}
           <button type="submit">🔄 Згенерувати знову</button>
         </form>
       </div>
@@ -77,12 +91,12 @@
 
     {% if t.status in ('rejected', 'generation_failed') %}
       <form method="post" action="/ui/tickets/{{ t.id }}/regenerate" class="actions">
-        <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+        {{ keep_view }}
         <button type="submit">🔄 Згенерувати знову</button>
       </form>
     {% elif t.status == 'send_failed' %}
       <form method="post" action="/ui/tickets/{{ t.id }}/retry-send" class="actions">
-        <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+        {{ keep_view }}
         <button type="submit">📤 Повторити надсилання</button>
       </form>
     {% endif %}
@@ -90,6 +104,7 @@
   {% else %}
     <p>Звернень немає.</p>
   {% endfor %}
+  {{ pager() }}
 
   <script>
     // Auto-refresh every 10 s unless the operator is typing.

@@ -63,8 +63,9 @@ async def list_tickets(
     session: SessionDep,
     status: TicketStatus | None = None,
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
-    return await tickets.list_tickets(session, status, limit)
+    return await tickets.list_tickets(session, status, limit, offset)
 
 
 @router.get("/tickets/{ticket_id}", response_model=TicketOut)
