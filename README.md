@@ -230,7 +230,7 @@ Compose передає весь `.env` у контейнери сервісу ч
 docker compose --profile test run --rm tests
 ```
 
-Що покрито (91 тест): одночасні дублікати вебхука (25 паралельних доставок дають 1 звернення),
+Що покрито (103 тести): одночасні дублікати вебхука (25 паралельних доставок дають 1 звернення),
 пік із 100 подій, конкурентний claim черги, протухлий lease і fencing, глобальний rate limiter
 між кількома інстансами, LLM-клієнт (no-key режим справді шле запит, класифікація помилок,
 refusal), парсинг чернеток і екранування prompt injection, повний сценарій вебхук → чернетка →
@@ -255,7 +255,8 @@ Anthropic отримують 401, затримка 5–30 с), мок з 25% 5xx
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/support_test pytest
-ruff check . && ruff format --check .
+pre-commit install            # хуки з .pre-commit-config.yaml при кожному коміті
+pre-commit run --all-files    # typos, ruff, ruff format, порожній рядок після блоків, заборона noqa, ty
 ```
 
 Запуск без Docker (для розробки):
@@ -290,8 +291,11 @@ helpdesk_mock/       мок хелпдеску
 kb/                  статті бази знань (Markdown)
 migrations/          Alembic
 tests/               pytest
+scripts/             хук pre-commit «порожній рядок після блоку»
 docs/                завдання та дизайн
 CLAUDE.md            правила для AI-агента
+.claude/agents/      субагенти: backend-engineer, test-engineer, software-architect
+.claude/rules/       стиль коду, типізація, лінтери (codestyle.md)
 ```
 
 ## Як я працював з агентом

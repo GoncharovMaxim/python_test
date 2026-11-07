@@ -36,6 +36,9 @@ helpdesk_mock/       fake helpdesk: reply API with failures + webhook sender wit
 kb/                  KB articles (Markdown + front matter), seeded into Postgres
 migrations/          Alembic migrations (hand-written)
 tests/               pytest suite against a real Postgres
+scripts/             repo tooling (blank-line-after-blocks pre-commit hook)
+.claude/agents/      subagents: backend-engineer, test-engineer, software-architect
+.claude/rules/       code style, typing and lint rules (codestyle.md)
 ```
 
 ## Invariants: do not break these
@@ -68,12 +71,17 @@ tests/               pytest suite against a real Postgres
 - Run everything: `docker compose up --build` (UI: http://localhost:8000, mock helpdesk: http://localhost:8001)
 - Tests (in Docker): `docker compose --profile test run --rm tests`
 - Tests (local): `TEST_DATABASE_URL=postgresql+asyncpg://user:pass@host:port/support_test pytest`
-- Lint: `ruff check . && ruff format --check .`
+- Lint & types (host, dev venv active): `pre-commit run --all-files`
+  (typos, ruff check --fix, ruff format, blank-line-after-blocks, no-suppressions, ty).
+  Single tools: `ruff check .`, `ruff format --check .`, `ty check`.
+- Coverage: `pytest --cov=app --cov=helpdesk_mock --cov=scripts --cov-branch --cov-report=term-missing`
 - New migration: `alembic revision -m "..."`, then hand-write `upgrade`/`downgrade`.
 
 ## Conventions
 
-- Type hints everywhere; async all the way down (no blocking I/O in the event loop).
+- Code style, typing and lint rules: `.claude/rules/codestyle.md` (79 columns, `import typing as t`,
+  type-only imports under `t.TYPE_CHECKING`, no `# noqa`/`# type: ignore`). Async all the way
+  down (no blocking I/O in the event loop).
 - Ticket statuses and job kinds live in `app/models.py`. Update the state diagram in
   `docs/design.md` when you add one.
 - User-facing UI text and KB are Ukrainian; code, comments, and logs are English.
