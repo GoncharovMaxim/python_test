@@ -17,9 +17,13 @@ from app.worker.runner import Worker
 
 async def main() -> None:
     settings = get_settings()
-    engine = make_engine(settings.database_url, pool_size=settings.db_pool_size)
+    engine = make_engine(
+        settings.database_url, pool_size=settings.db_pool_size
+    )
     sessionmaker = make_sessionmaker(engine)
-    limiter = PostgresRateLimiter(sessionmaker, settings.llm_rate_limit_per_minute)
+    limiter = PostgresRateLimiter(
+        sessionmaker, settings.llm_rate_limit_per_minute
+    )
     llm = LLMClient(settings, limiter)
     try:
         async with httpx.AsyncClient(follow_redirects=False) as http:
@@ -28,6 +32,7 @@ async def main() -> None:
             for sig in (signal.SIGTERM, signal.SIGINT):
                 with contextlib.suppress(NotImplementedError):  # Windows
                     loop.add_signal_handler(sig, worker.stop)
+
             await worker.run()
     finally:
         await engine.dispose()

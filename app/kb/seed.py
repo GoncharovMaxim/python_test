@@ -20,9 +20,12 @@ async def main() -> None:
             await sync_articles(session, articles, settings.kb_public_base_url)
     finally:
         await engine.dispose()
+
     log.info("knowledge base synced: %d articles", len(articles))
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s"
+    )
     asyncio.run(main())

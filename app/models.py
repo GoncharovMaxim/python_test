@@ -1,7 +1,7 @@
+import typing as t
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -32,8 +32,12 @@ class TicketStatus(StrEnum):
     APPROVED = "approved"  # operator approved; reply is queued / being sent
     SENT = "sent"  # helpdesk accepted the reply (2xx)
     REJECTED = "rejected"  # operator rejected the draft
-    GENERATION_FAILED = "generation_failed"  # LLM failed permanently / retries exhausted
-    SEND_FAILED = "send_failed"  # helpdesk failed permanently / retries exhausted
+    GENERATION_FAILED = (
+        "generation_failed"  # LLM failed permanently / retries exhausted
+    )
+    SEND_FAILED = (
+        "send_failed"  # helpdesk failed permanently / retries exhausted
+    )
 
 
 class JobKind(StrEnum):
@@ -57,7 +61,9 @@ class Ticket(Base):
 
     __tablename__ = "tickets"
     __table_args__ = (
-        CheckConstraint(_one_of("status", TicketStatus), name="tickets_status_check"),
+        CheckConstraint(
+            _one_of("status", TicketStatus), name="tickets_status_check"
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -67,26 +73,38 @@ class Ticket(Base):
     message: Mapped[str] = mapped_column(Text)
     reply_url: Mapped[str] = mapped_column(Text)
 
-    status: Mapped[str] = mapped_column(String(32), default=TicketStatus.NEW, index=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default=TicketStatus.NEW, index=True
+    )
 
     draft_text: Mapped[str | None] = mapped_column(Text)
     # [{"slug": ..., "title": ..., "url": ...}] - articles the draft links to
-    draft_sources: Mapped[list[dict[str, Any]]] = mapped_column(
+    draft_sources: Mapped[list[dict[str, t.Any]]] = mapped_column(
         JSONB, default=list, server_default=text("'[]'::jsonb")
     )
     draft_model: Mapped[str | None] = mapped_column(String(100))
     # Incremented on every generated draft; approval must name the version it approves.
-    draft_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    draft_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    draft_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    draft_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     reply_text: Mapped[str | None] = mapped_column(Text)
     # Created once at approval and reused for every delivery attempt.
-    reply_idempotency_key: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    reply_idempotency_key: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True)
+    )
     rejection_reason: Mapped[str | None] = mapped_column(Text)
     last_error: Mapped[str | None] = mapped_column(Text)
 
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    rejected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
@@ -107,7 +125,9 @@ class Job(Base):
     __table_args__ = (
         UniqueConstraint("ticket_id", "kind", name="jobs_ticket_kind_key"),
         CheckConstraint(_one_of("kind", JobKind), name="jobs_kind_check"),
-        CheckConstraint(_one_of("status", JobStatus), name="jobs_status_check"),
+        CheckConstraint(
+            _one_of("status", JobStatus), name="jobs_status_check"
+        ),
         Index(
             "jobs_claim_idx",
             "kind",
@@ -118,9 +138,13 @@ class Job(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     kind: Mapped[str] = mapped_column(String(32))
-    ticket_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tickets.id", ondelete="CASCADE"))
+    ticket_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tickets.id", ondelete="CASCADE")
+    )
     status: Mapped[str] = mapped_column(String(16), default=JobStatus.QUEUED)
-    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
     max_attempts: Mapped[int] = mapped_column(Integer)
     # New random value on every claim; finishing a job requires the token of that claim.
     lease_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
@@ -128,7 +152,9 @@ class Job(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     last_error: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -143,8 +169,12 @@ class KbArticle(Base):
     body: Mapped[str] = mapped_column(Text)
     url: Mapped[str] = mapped_column(Text)
     # Normalised terms (see app/kb/text.py); Postgres has no Ukrainian stemmer.
-    title_terms: Mapped[str] = mapped_column(Text, default="", server_default="")
-    body_terms: Mapped[str] = mapped_column(Text, default="", server_default="")
+    title_terms: Mapped[str] = mapped_column(
+        Text, default="", server_default=""
+    )
+    body_terms: Mapped[str] = mapped_column(
+        Text, default="", server_default=""
+    )
     search_vector: Mapped[str] = mapped_column(
         TSVECTOR,
         Computed(
@@ -157,7 +187,11 @@ class KbArticle(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (Index("kb_articles_search_idx", "search_vector", postgresql_using="gin"),)
+    __table_args__ = (
+        Index(
+            "kb_articles_search_idx", "search_vector", postgresql_using="gin"
+        ),
+    )
 
 
 class LlmRequestLog(Base):
@@ -167,5 +201,7 @@ class LlmRequestLog(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.clock_timestamp(), index=True
+        DateTime(timezone=True),
+        server_default=func.clock_timestamp(),
+        index=True,
     )

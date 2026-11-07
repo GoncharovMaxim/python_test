@@ -10,17 +10,26 @@
 - callers run finishing transitions in the same transaction as their ticket update.
 """
 
+from __future__ import annotations
+
 import random
-import uuid
+import typing as t
 from dataclasses import dataclass
 from datetime import timedelta
 
 from sqlalchemy import func, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import SessionMaker
-from app.models import Job, JobKind, JobStatus
+from app.models import Job, JobStatus
+
+if t.TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy import ColumnElement
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.db import SessionMaker
+    from app.models import JobKind
 
 
 @dataclass(frozen=True)
@@ -92,12 +101,15 @@ async def claim(
 ) -> ClaimedJob | None:
     async with sessionmaker.begin() as session:
         row = (
-            await session.execute(_CLAIM_SQL, {"kind": str(kind), "lease": float(lease_seconds)})
+            await session.execute(
+                _CLAIM_SQL, {"kind": str(kind), "lease": float(lease_seconds)}
+            )
         ).first()
+
     return ClaimedJob(**row._mapping) if row else None
 
 
-def _owned(job: ClaimedJob):
+def _owned(job: ClaimedJob) -> ColumnElement[bool]:
     return (
         (Job.id == job.id)
         & (Job.status == JobStatus.RUNNING)
@@ -133,8 +145,12 @@ async def mark_retry(
     )
 
 
-async def mark_failed(session: AsyncSession, job: ClaimedJob, error: str) -> bool:
-    return await _finish(session, job, status=JobStatus.FAILED, last_error=error)
+async def mark_failed(
+    session: AsyncSession, job: ClaimedJob, error: str
+) -> bool:
+    return await _finish(
+        session, job, status=JobStatus.FAILED, last_error=error
+    )
 
 
 def backoff_delay(attempt: int, base: float, cap: float) -> float:

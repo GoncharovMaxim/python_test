@@ -18,7 +18,10 @@ async def _make_ticket(sessionmaker, n: int = 1) -> int:
         session.add(ticket)
         await session.flush()
         await queue.enqueue(
-            session, kind=JobKind.GENERATE_DRAFT, ticket_id=ticket.id, max_attempts=3
+            session,
+            kind=JobKind.GENERATE_DRAFT,
+            ticket_id=ticket.id,
+            max_attempts=3,
         )
         return ticket.id
 
@@ -35,8 +38,12 @@ async def test_claim_returns_none_when_queue_is_empty(sessionmaker):
 async def test_concurrent_claims_never_return_the_same_job(sessionmaker):
     for n in range(5):
         await _make_ticket(sessionmaker, n)
+
     claims = await asyncio.gather(
-        *(queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60) for _ in range(20))
+        *(
+            queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60)
+            for _ in range(20)
+        )
     )
     claimed = [c.id for c in claims if c is not None]
     assert len(claimed) == 5
@@ -46,41 +53,65 @@ async def test_concurrent_claims_never_return_the_same_job(sessionmaker):
 async def test_claim_respects_kind(sessionmaker):
     await _make_ticket(sessionmaker)
     assert await queue.claim(sessionmaker, JobKind.SEND_REPLY, 60) is None
-    assert await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60) is not None
+    assert (
+        await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60) is not None
+    )
 
 
-async def test_expired_lease_is_reclaimed_and_stale_owner_is_fenced(sessionmaker):
+async def test_expired_lease_is_reclaimed_and_stale_owner_is_fenced(
+    sessionmaker,
+):
     await _make_ticket(sessionmaker)
-    first = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=0)
+    first = await queue.claim(
+        sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=0
+    )
     assert first is not None and first.attempts == 1
     # Lease of 0 s has already expired: another worker can take the job over.
-    second = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60)
-    assert second is not None and second.id == first.id and second.attempts == 2
+    second = await queue.claim(
+        sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60
+    )
+    assert (
+        second is not None and second.id == first.id and second.attempts == 2
+    )
 
     async with sessionmaker.begin() as session:
         assert await queue.mark_done(session, first) is False  # stale owner
         assert await queue.mark_done(session, second) is True
+
     assert (await _job(sessionmaker)).status == JobStatus.DONE
 
 
-async def test_stale_owner_is_fenced_after_job_was_reset_and_reclaimed(sessionmaker):
+async def test_stale_owner_is_fenced_after_job_was_reset_and_reclaimed(
+    sessionmaker,
+):
     """ABA: re-enqueue resets `attempts`, so a fresh claim can have the same attempt number
     as a long-dead one. Only a per-claim token tells them apart."""
     ticket_id = await _make_ticket(sessionmaker)
-    stale = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=0)
-    takeover = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60)
+    stale = await queue.claim(
+        sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=0
+    )
+    takeover = await queue.claim(
+        sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60
+    )
     async with sessionmaker.begin() as session:
         assert await queue.mark_done(session, takeover)
         await queue.enqueue(  # e.g. the operator asked for a new draft
-            session, kind=JobKind.GENERATE_DRAFT, ticket_id=ticket_id, max_attempts=3
+            session,
+            kind=JobKind.GENERATE_DRAFT,
+            ticket_id=ticket_id,
+            max_attempts=3,
         )
-    fresh = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60)
+
+    fresh = await queue.claim(
+        sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60
+    )
     assert fresh.attempts == stale.attempts == 1
 
     async with sessionmaker.begin() as session:
         assert await queue.mark_done(session, stale) is False
         assert await queue.mark_retry(session, stale, "late", 0) is False
         assert await queue.mark_failed(session, stale, "late") is False
+
     assert (await _job(sessionmaker)).status == JobStatus.RUNNING
     async with sessionmaker.begin() as session:
         assert await queue.mark_done(session, fresh) is True
@@ -88,7 +119,9 @@ async def test_stale_owner_is_fenced_after_job_was_reset_and_reclaimed(sessionma
 
 async def test_running_job_is_not_claimed_twice(sessionmaker):
     await _make_ticket(sessionmaker)
-    assert await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60) is not None
+    assert (
+        await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60) is not None
+    )
     assert await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60) is None
 
 
@@ -97,9 +130,14 @@ async def test_retry_postpones_job(sessionmaker):
     job = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60)
     async with sessionmaker.begin() as session:
         assert await queue.mark_retry(session, job, "boom", delay_seconds=3600)
+
     assert await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60) is None
     stored = await _job(sessionmaker)
-    assert (stored.status, stored.last_error, stored.attempts) == (JobStatus.QUEUED, "boom", 1)
+    assert (stored.status, stored.last_error, stored.attempts) == (
+        JobStatus.QUEUED,
+        "boom",
+        1,
+    )
 
 
 async def test_enqueue_resets_finished_job_but_not_active_one(sessionmaker):
@@ -108,17 +146,29 @@ async def test_enqueue_resets_finished_job_but_not_active_one(sessionmaker):
 
     async with sessionmaker.begin() as session:  # active: no-op
         await queue.enqueue(
-            session, kind=JobKind.GENERATE_DRAFT, ticket_id=ticket_id, max_attempts=3
+            session,
+            kind=JobKind.GENERATE_DRAFT,
+            ticket_id=ticket_id,
+            max_attempts=3,
         )
+
     assert (await _job(sessionmaker)).status == JobStatus.RUNNING
 
     async with sessionmaker.begin() as session:
         await queue.mark_failed(session, job, "nope")
         await queue.enqueue(
-            session, kind=JobKind.GENERATE_DRAFT, ticket_id=ticket_id, max_attempts=3
+            session,
+            kind=JobKind.GENERATE_DRAFT,
+            ticket_id=ticket_id,
+            max_attempts=3,
         )
+
     stored = await _job(sessionmaker)
-    assert (stored.status, stored.attempts, stored.last_error) == (JobStatus.QUEUED, 0, None)
+    assert (stored.status, stored.attempts, stored.last_error) == (
+        JobStatus.QUEUED,
+        0,
+        None,
+    )
 
 
 def test_backoff_grows_and_is_capped():

@@ -6,17 +6,23 @@ transaction-scoped advisory lock serialises "count + insert" so concurrent worke
 both take the last slot.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import random
+import typing as t
 
 from sqlalchemy import text
 
-from app.db import SessionMaker
+if t.TYPE_CHECKING:
+    from app.db import SessionMaker
 
 log = logging.getLogger(__name__)
 
-_LOCK_KEY = 0x11A_5107  # arbitrary constant shared by every process using the limiter
+_LOCK_KEY = (
+    0x11A_5107  # arbitrary constant shared by every process using the limiter
+)
 
 _COUNT_SQL = text(
     """
@@ -30,9 +36,15 @@ _COUNT_SQL = text(
 
 
 class PostgresRateLimiter:
-    def __init__(self, sessionmaker: SessionMaker, limit: int, window_seconds: float = 60.0):
+    def __init__(
+        self,
+        sessionmaker: SessionMaker,
+        limit: int,
+        window_seconds: float = 60.0,
+    ) -> None:
         if limit < 1:
             raise ValueError("limit must be >= 1")
+
         self._sessionmaker = sessionmaker
         self._limit = limit
         self._window = float(window_seconds)
@@ -43,15 +55,22 @@ class PostgresRateLimiter:
             wait = await self._try_acquire()
             if wait is None:
                 return
+
             # Small jitter so waiters don't stampede the lock at the same instant.
             await asyncio.sleep(wait + random.uniform(0.01, 0.1))
 
     async def _try_acquire(self) -> float | None:
         async with self._sessionmaker.begin() as session:
-            await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _LOCK_KEY})
-            row = (await session.execute(_COUNT_SQL, {"window": self._window})).one()
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"), {"key": _LOCK_KEY}
+            )
+            row = (
+                await session.execute(_COUNT_SQL, {"window": self._window})
+            ).one()
             if row.used < self._limit:
-                await session.execute(text("INSERT INTO llm_request_log DEFAULT VALUES"))
+                await session.execute(
+                    text("INSERT INTO llm_request_log DEFAULT VALUES")
+                )
                 await session.execute(
                     text(
                         "DELETE FROM llm_request_log "
@@ -60,6 +79,12 @@ class PostgresRateLimiter:
                     {"keep": self._window * 10},
                 )
                 return None
+
             wait = max(float(row.wait_seconds or 0.0), 0.0)
-            log.debug("LLM rate limit reached (%d/%d), waiting %.2fs", row.used, self._limit, wait)
+            log.debug(
+                "LLM rate limit reached (%d/%d), waiting %.2fs",
+                row.used,
+                self._limit,
+                wait,
+            )
             return wait

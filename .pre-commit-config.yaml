@@ -1,0 +1,38 @@
+# Hook chain from .claude/rules/codestyle.md.
+#   one-time:   pip install -r requirements-dev.txt && pre-commit install
+#   on demand:  pre-commit run --files <files>   |   pre-commit run --all-files
+# `ty` runs from the active virtualenv (requirements-dev.txt), so FastAPI,
+# SQLAlchemy and pydantic types are resolved and really checked.
+repos:
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.52.0
+    hooks:
+      - id: typos
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: blank-line-after-blocks
+        name: blank line after blocks
+        entry: python scripts/blank_line_after_blocks.py
+        language: python
+        types: [python]
+
+      - id: no-suppressions
+        name: no noqa / type-ignore suppressions
+        entry: '#\s*(noqa|type:\s*ignore|ty:\s*ignore)'
+        language: pygrep
+        types: [python]
+
+      - id: ty
+        name: ty
+        entry: ty check
+        language: unsupported
+        types: [python]
+        pass_filenames: false

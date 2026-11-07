@@ -71,6 +71,7 @@ def stem(word: str) -> str:
         if w.endswith(suffix) and len(w) - len(suffix) >= MIN_STEM_LENGTH:
             w = w[: -len(suffix)]
             break
+
     return w[:STEM_LENGTH]
 
 

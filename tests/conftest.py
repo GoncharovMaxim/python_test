@@ -20,7 +20,9 @@ from app.kb.repository import sync_articles
 from app.main import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_TEST_DB = "postgresql+asyncpg://support:support@localhost:5432/support_test"
+DEFAULT_TEST_DB = (
+    "postgresql+asyncpg://support:support@localhost:5432/support_test"
+)
 ALLOWED_HOST = "helpdesk.test"
 
 
@@ -37,10 +39,13 @@ async def database_url() -> str:
     admin = url.set(drivername="postgresql", database="postgres")
     conn = await asyncpg.connect(admin.render_as_string(hide_password=False))
     try:
-        await conn.execute(f'DROP DATABASE IF EXISTS "{url.database}" WITH (FORCE)')
+        await conn.execute(
+            f'DROP DATABASE IF EXISTS "{url.database}" WITH (FORCE)'
+        )
         await conn.execute(f'CREATE DATABASE "{url.database}"')
     finally:
         await conn.close()
+
     rendered = url.render_as_string(hide_password=False)
     await asyncio.to_thread(_run_migrations, rendered)
     return rendered
@@ -50,7 +55,10 @@ async def database_url() -> str:
 async def engine(database_url):
     engine = make_engine(database_url, pool_size=20)
     async with make_sessionmaker(engine).begin() as session:
-        await sync_articles(session, load_articles(ROOT / "kb"), "https://kb.test/articles")
+        await sync_articles(
+            session, load_articles(ROOT / "kb"), "https://kb.test/articles"
+        )
+
     yield engine
     await engine.dispose()
 
@@ -59,7 +67,11 @@ async def engine(database_url):
 async def sessionmaker(engine):
     yield make_sessionmaker(engine)
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE tickets, jobs, llm_request_log RESTART IDENTITY CASCADE"))
+        await conn.execute(
+            text(
+                "TRUNCATE tickets, jobs, llm_request_log RESTART IDENTITY CASCADE"
+            )
+        )
 
 
 @pytest.fixture
@@ -85,7 +97,9 @@ def settings(database_url) -> Settings:
 async def client(settings, sessionmaker):
     app = create_app(settings=settings, sessionmaker=sessionmaker)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
         yield client
 
 

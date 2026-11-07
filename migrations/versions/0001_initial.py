@@ -33,7 +33,9 @@ def _one_of(column: str, values: tuple[str, ...]) -> str:
     return f"{column} IN ({', '.join(repr(v) for v in values)})"
 
 
-def _ts(name: str, *, nullable: bool = True, default: str | None = None) -> sa.Column:
+def _ts(
+    name: str, *, nullable: bool = True, default: str | None = None
+) -> sa.Column:
     return sa.Column(
         name,
         sa.DateTime(timezone=True),
@@ -51,7 +53,9 @@ def upgrade() -> None:
         sa.Column("customer_email", sa.String(320), nullable=False),
         sa.Column("message", sa.Text, nullable=False),
         sa.Column("reply_url", sa.Text, nullable=False),
-        sa.Column("status", sa.String(32), nullable=False, server_default="new"),
+        sa.Column(
+            "status", sa.String(32), nullable=False, server_default="new"
+        ),
         sa.Column("draft_text", sa.Text),
         sa.Column(
             "draft_sources",
@@ -70,9 +74,13 @@ def upgrade() -> None:
         _ts("sent_at"),
         _ts("created_at", nullable=False, default="now()"),
         _ts("updated_at", nullable=False, default="now()"),
-        sa.CheckConstraint(_one_of("status", TICKET_STATUSES), name="tickets_status_check"),
+        sa.CheckConstraint(
+            _one_of("status", TICKET_STATUSES), name="tickets_status_check"
+        ),
     )
-    op.create_index("ix_tickets_external_ticket_id", "tickets", ["external_ticket_id"])
+    op.create_index(
+        "ix_tickets_external_ticket_id", "tickets", ["external_ticket_id"]
+    )
     op.create_index("ix_tickets_status", "tickets", ["status"])
     op.create_index("ix_tickets_created_at", "tickets", ["created_at"])
 
@@ -86,7 +94,9 @@ def upgrade() -> None:
             sa.ForeignKey("tickets.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("status", sa.String(16), nullable=False, server_default="queued"),
+        sa.Column(
+            "status", sa.String(16), nullable=False, server_default="queued"
+        ),
         sa.Column("attempts", sa.Integer, nullable=False, server_default="0"),
         sa.Column("max_attempts", sa.Integer, nullable=False),
         _ts("available_at", nullable=False, default="now()"),
@@ -95,7 +105,9 @@ def upgrade() -> None:
         _ts("updated_at", nullable=False, default="now()"),
         sa.UniqueConstraint("ticket_id", "kind", name="jobs_ticket_kind_key"),
         sa.CheckConstraint(_one_of("kind", JOB_KINDS), name="jobs_kind_check"),
-        sa.CheckConstraint(_one_of("status", JOB_STATUSES), name="jobs_status_check"),
+        sa.CheckConstraint(
+            _one_of("status", JOB_STATUSES), name="jobs_status_check"
+        ),
     )
     op.create_index(
         "jobs_claim_idx",
@@ -125,7 +137,10 @@ def upgrade() -> None:
         _ts("updated_at", nullable=False, default="now()"),
     )
     op.create_index(
-        "kb_articles_search_idx", "kb_articles", ["search_vector"], postgresql_using="gin"
+        "kb_articles_search_idx",
+        "kb_articles",
+        ["search_vector"],
+        postgresql_using="gin",
     )
 
     op.create_table(
@@ -133,7 +148,9 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger, sa.Identity(), primary_key=True),
         _ts("created_at", nullable=False, default="clock_timestamp()"),
     )
-    op.create_index("ix_llm_request_log_created_at", "llm_request_log", ["created_at"])
+    op.create_index(
+        "ix_llm_request_log_created_at", "llm_request_log", ["created_at"]
+    )
 
 
 def downgrade() -> None:

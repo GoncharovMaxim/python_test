@@ -1,11 +1,20 @@
+from __future__ import annotations
+
+import typing as t
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.config import Settings, get_settings
-from app.db import SessionMaker, make_engine, make_sessionmaker
+from app.config import get_settings
+from app.db import make_engine, make_sessionmaker
 from app.log_config import configure_logging
 from app.web import api, ui, webhooks
+
+if t.TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from app.config import Settings
+    from app.db import SessionMaker
 
 
 def create_app(
@@ -16,11 +25,13 @@ def create_app(
     engine = None
     if sessionmaker is None:
         configure_logging()
-        engine = make_engine(settings.database_url, pool_size=settings.db_pool_size)
+        engine = make_engine(
+            settings.database_url, pool_size=settings.db_pool_size
+        )
         sessionmaker = make_sessionmaker(engine)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         yield
         if engine is not None:
             await engine.dispose()

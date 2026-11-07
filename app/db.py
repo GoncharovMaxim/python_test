@@ -1,9 +1,17 @@
+from __future__ import annotations
+
+import typing as t
+
 from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+
+if t.TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import (
+        AsyncEngine,
+    )
 
 SessionMaker = async_sessionmaker[AsyncSession]
 

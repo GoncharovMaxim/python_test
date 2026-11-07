@@ -9,9 +9,11 @@ async def test_limit_is_enforced_within_window(sessionmaker):
     started = time.monotonic()
     for _ in range(3):
         await limiter.acquire()
+
     assert time.monotonic() - started < 0.8
 
-    await limiter.acquire()  # 4th has to wait for the oldest slot to leave the window
+    # The 4th has to wait for the oldest slot to leave the window.
+    await limiter.acquire()
     assert time.monotonic() - started >= 0.9
 
 

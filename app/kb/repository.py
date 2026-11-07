@@ -1,13 +1,20 @@
-from collections.abc import Sequence
+from __future__ import annotations
+
+import typing as t
 from dataclasses import dataclass
 
 from sqlalchemy import delete, func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.kb.loader import ArticleSource
 from app.kb.text import terms
 from app.models import KbArticle
+
+if t.TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.kb.loader import ArticleSource
 
 
 @dataclass(frozen=True)
@@ -39,11 +46,17 @@ async def sync_articles(
         stmt = pg_insert(KbArticle).values(**values)
         stmt = stmt.on_conflict_do_update(
             index_elements=[KbArticle.slug],
-            set_={**{k: stmt.excluded[k] for k in values if k != "slug"}, "updated_at": func.now()},
+            set_={
+                **{k: stmt.excluded[k] for k in values if k != "slug"},
+                "updated_at": func.now(),
+            },
         )
         await session.execute(stmt)
+
     await session.execute(
-        delete(KbArticle).where(KbArticle.slug.not_in([a.slug for a in articles]))
+        delete(KbArticle).where(
+            KbArticle.slug.not_in([a.slug for a in articles])
+        )
     )
 
 
@@ -58,11 +71,16 @@ _SEARCH_SQL = text(
 )
 
 
-async def search_articles(session: AsyncSession, query: str, limit: int) -> list[FoundArticle]:
+async def search_articles(
+    session: AsyncSession, query: str, limit: int
+) -> list[FoundArticle]:
     """OR-match of normalised query terms, ranked with title terms weighted higher."""
     query_terms = sorted(set(terms(query)))
     if not query_terms:
         return []
+
     # terms() yields only letters/digits, so joining with `|` is a safe tsquery.
-    result = await session.execute(_SEARCH_SQL, {"query": " | ".join(query_terms), "limit": limit})
+    result = await session.execute(
+        _SEARCH_SQL, {"query": " | ".join(query_terms), "limit": limit}
+    )
     return [FoundArticle(**row._mapping) for row in result]

@@ -18,8 +18,10 @@ import itertools
 import logging
 import os
 import random
+import typing as t
 import uuid
 from collections import Counter
+from collections.abc import Coroutine
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,10 +33,16 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 log = logging.getLogger("helpdesk_mock")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [mock] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s [mock] %(message)s"
+)
 
-WEBHOOK_URL = os.getenv("MOCK_WEBHOOK_URL", "http://localhost:8000/webhooks/helpdesk")
-PUBLIC_BASE_URL = os.getenv("MOCK_PUBLIC_BASE_URL", "http://localhost:8001").rstrip("/")
+WEBHOOK_URL = os.getenv(
+    "MOCK_WEBHOOK_URL", "http://localhost:8000/webhooks/helpdesk"
+)
+PUBLIC_BASE_URL = os.getenv(
+    "MOCK_PUBLIC_BASE_URL", "http://localhost:8001"
+).rstrip("/")
 WEBHOOK_TIMEOUT_SECONDS = 2.0
 WEBHOOK_MAX_ATTEMPTS = 8
 
@@ -57,8 +65,12 @@ SAMPLE_MESSAGES = [
 @dataclass
 class Config:
     reply_fail_rate: float = float(os.getenv("MOCK_REPLY_FAIL_RATE", "0.2"))
-    reply_lost_response_rate: float = float(os.getenv("MOCK_REPLY_LOST_RESPONSE_RATE", "0.1"))
-    reply_hang_seconds: float = float(os.getenv("MOCK_REPLY_HANG_SECONDS", "15"))
+    reply_lost_response_rate: float = float(
+        os.getenv("MOCK_REPLY_LOST_RESPONSE_RATE", "0.1")
+    )
+    reply_hang_seconds: float = float(
+        os.getenv("MOCK_REPLY_HANG_SECONDS", "15")
+    )
 
 
 @dataclass
@@ -103,7 +115,7 @@ async def create_reply(
     ticket_id: str,
     body: ReplyIn,
     idempotency_key: str | None = Header(default=None),
-):
+) -> JSONResponse:
     state.stats["reply_requests"] += 1
     if body.ticket_id != ticket_id:
         raise HTTPException(422, "ticket_id in body does not match the URL")
@@ -113,7 +125,9 @@ async def create_reply(
         stored = state.by_key[idempotency_key]
         log.info("reply %s replayed for key %s", stored.id, idempotency_key)
         return JSONResponse(
-            asdict(stored), status_code=201, headers={"Idempotent-Replayed": "true"}
+            asdict(stored),
+            status_code=201,
+            headers={"Idempotent-Replayed": "true"},
         )
 
     roll = random.random()
@@ -121,12 +135,17 @@ async def create_reply(
     if roll < cfg.reply_fail_rate:
         state.stats["failed_5xx"] += 1
         return JSONResponse(
-            {"error": "temporary failure"}, status_code=random.choice([500, 502, 503])
+            {"error": "temporary failure"},
+            status_code=random.choice([500, 502, 503]),
         )
 
-    if any(r.ticket_id == ticket_id and r.message == body.message for r in state.replies):
+    if any(
+        r.ticket_id == ticket_id and r.message == body.message
+        for r in state.replies
+    ):
         state.stats["duplicate_messages"] += 1
         log.error("DUPLICATE reply to ticket %s", ticket_id)
+
     reply = StoredReply(
         id=f"rep_{uuid.uuid4().hex[:8]}",
         ticket_id=ticket_id,
@@ -137,14 +156,18 @@ async def create_reply(
     state.replies.append(reply)
     if idempotency_key:
         state.by_key[idempotency_key] = reply
+
     state.stats["replies_stored"] += 1
 
     if roll < cfg.reply_fail_rate + cfg.reply_lost_response_rate:
         state.stats["lost_responses"] += 1
         log.info(
-            "reply %s stored, response will be lost (hang %ss)", reply.id, cfg.reply_hang_seconds
+            "reply %s stored, response will be lost (hang %ss)",
+            reply.id,
+            cfg.reply_hang_seconds,
         )
         await asyncio.sleep(cfg.reply_hang_seconds)
+
     return JSONResponse(asdict(reply), status_code=201)
 
 
@@ -156,7 +179,7 @@ async def list_ticket_replies(ticket_id: str) -> list[dict]:
 # --- Webhook sender -------------------------------------------------------------------
 
 
-def _spawn(coro) -> None:
+def _spawn(coro: Coroutine[t.Any, t.Any, None]) -> None:
     task = asyncio.create_task(coro)
     state.tasks.add(task)
     task.add_done_callback(state.tasks.discard)
@@ -166,29 +189,49 @@ async def _deliver(client: httpx.AsyncClient, event: dict) -> None:
     """Deliver like a real helpdesk: wait <= 2 s, retry on anything but 2xx."""
     for attempt in range(1, WEBHOOK_MAX_ATTEMPTS + 1):
         try:
-            response = await client.post(WEBHOOK_URL, json=event, timeout=WEBHOOK_TIMEOUT_SECONDS)
+            response = await client.post(
+                WEBHOOK_URL, json=event, timeout=WEBHOOK_TIMEOUT_SECONDS
+            )
             if response.is_success:
                 state.stats["webhook_delivered"] += 1
                 return
+
             state.stats["webhook_non_2xx"] += 1
-            log.warning("webhook %s -> HTTP %s", event["event_id"], response.status_code)
+            log.warning(
+                "webhook %s -> HTTP %s",
+                event["event_id"],
+                response.status_code,
+            )
         except httpx.HTTPError as exc:
             state.stats["webhook_timeouts_or_errors"] += 1
-            log.warning("webhook %s attempt %d failed: %r", event["event_id"], attempt, exc)
+            log.warning(
+                "webhook %s attempt %d failed: %r",
+                event["event_id"],
+                attempt,
+                exc,
+            )
+
         state.stats["webhook_retries"] += 1
         await asyncio.sleep(min(30.0, 2.0**attempt) * random.uniform(0.5, 1.0))
+
     state.stats["webhook_gave_up"] += 1
 
 
-async def _deliver_with_duplicates(event: dict, duplicate_rate: float, delay: float = 0.0) -> None:
+async def _deliver_with_duplicates(
+    event: dict, duplicate_rate: float, delay: float = 0.0
+) -> None:
     if delay:
         await asyncio.sleep(delay)
+
     async with httpx.AsyncClient() as client:
         deliveries = [_deliver(client, event)]
         if random.random() < duplicate_rate:  # the same event, concurrently
             state.stats["webhook_concurrent_duplicates"] += 1
             deliveries.append(_deliver(client, event))
-        if random.random() < duplicate_rate:  # the same event again, a bit later
+
+        if (
+            random.random() < duplicate_rate
+        ):  # the same event again, a bit later
             state.stats["webhook_late_duplicates"] += 1
 
             async def late() -> None:
@@ -196,6 +239,7 @@ async def _deliver_with_duplicates(event: dict, duplicate_rate: float, delay: fl
                 await _deliver(client, event)
 
             deliveries.append(late())
+
         await asyncio.gather(*deliveries)
 
 
@@ -235,8 +279,13 @@ async def simulate_ticket(body: TicketIn) -> dict:
 async def simulate_burst(body: BurstIn) -> dict:
     for _ in range(body.count):
         event = _new_event()
-        delay = random.uniform(0, body.spread_seconds) if body.spread_seconds else 0.0
+        delay = (
+            random.uniform(0, body.spread_seconds)
+            if body.spread_seconds
+            else 0.0
+        )
         _spawn(_deliver_with_duplicates(event, body.duplicate_rate, delay))
+
     return {"scheduled": body.count, "spread_seconds": body.spread_seconds}
 
 
@@ -250,6 +299,7 @@ class ConfigIn(BaseModel):
 async def update_config(body: ConfigIn) -> dict:
     for name, value in body.model_dump(exclude_none=True).items():
         setattr(state.config, name, value)
+
     return asdict(state.config)
 
 
@@ -267,7 +317,7 @@ async def get_state() -> dict:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -283,7 +333,9 @@ async def index(request: Request):
 
 
 @app.post("/ui/ticket")
-async def ui_ticket(message: str = Form(""), duplicate_rate: float = Form(0.0)):
+async def ui_ticket(
+    message: str = Form(""), duplicate_rate: float = Form(0.0)
+) -> RedirectResponse:
     event = _new_event(message.strip() or None)
     _spawn(_deliver_with_duplicates(event, duplicate_rate))
     return RedirectResponse("/", status_code=303)
@@ -291,10 +343,16 @@ async def ui_ticket(message: str = Form(""), duplicate_rate: float = Form(0.0)):
 
 @app.post("/ui/burst")
 async def ui_burst(
-    count: int = Form(50), spread_seconds: float = Form(0.0), duplicate_rate: float = Form(0.3)
-):
+    count: int = Form(50),
+    spread_seconds: float = Form(0.0),
+    duplicate_rate: float = Form(0.3),
+) -> RedirectResponse:
     await simulate_burst(
-        BurstIn(count=count, spread_seconds=spread_seconds, duplicate_rate=duplicate_rate)
+        BurstIn(
+            count=count,
+            spread_seconds=spread_seconds,
+            duplicate_rate=duplicate_rate,
+        )
     )
     return RedirectResponse("/", status_code=303)
 
@@ -304,7 +362,7 @@ async def ui_config(
     reply_fail_rate: float = Form(...),
     reply_lost_response_rate: float = Form(...),
     reply_hang_seconds: float = Form(...),
-):
+) -> RedirectResponse:
     await update_config(
         ConfigIn(
             reply_fail_rate=reply_fail_rate,

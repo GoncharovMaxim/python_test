@@ -1,15 +1,15 @@
 """Job handlers. Each one reads state, does slow I/O without holding a DB connection,
 then writes the result and finishes the job in one transaction."""
 
+from __future__ import annotations
+
 import logging
+import typing as t
 from dataclasses import dataclass
 
-import httpx
 from sqlalchemy import func, update
 
 from app import queue
-from app.config import Settings
-from app.db import SessionMaker
 from app.drafts import (
     DRAFT_SCHEMA,
     STATIC_DRAFT_RESPONSE,
@@ -20,9 +20,17 @@ from app.drafts import (
 )
 from app.helpdesk import send_reply
 from app.kb.repository import search_articles
-from app.llm.client import LLMClient, LLMError
+from app.llm.client import LLMError
 from app.models import Ticket, TicketStatus
-from app.queue import ClaimedJob
+
+if t.TYPE_CHECKING:
+    import httpx
+
+    from app.config import Settings
+    from app.db import SessionMaker
+    from app.kb.repository import FoundArticle
+    from app.llm.client import LLMClient
+    from app.queue import ClaimedJob
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +43,15 @@ class WorkerContext:
     http: httpx.AsyncClient
 
 
-async def _finish_noop(ctx: WorkerContext, job: ClaimedJob, reason: str) -> None:
+async def _finish_noop(
+    ctx: WorkerContext, job: ClaimedJob, reason: str
+) -> None:
     log.info(
-        "job %s (%s) for ticket %s: nothing to do (%s)", job.id, job.kind, job.ticket_id, reason
+        "job %s (%s) for ticket %s: nothing to do (%s)",
+        job.id,
+        job.kind,
+        job.ticket_id,
+        reason,
     )
     async with ctx.sessionmaker.begin() as session:
         await queue.mark_done(session, job)
@@ -58,7 +72,8 @@ async def _retry_or_fail(
     async with ctx.sessionmaker.begin() as session:
         if retryable and not job.is_last_attempt:
             delay = max(
-                retry_after or 0.0, queue.backoff_delay(job.attempts, backoff_base, backoff_cap)
+                retry_after or 0.0,
+                queue.backoff_delay(job.attempts, backoff_base, backoff_cap),
             )
             if await queue.mark_retry(session, job, error, delay):
                 await session.execute(
@@ -75,12 +90,21 @@ async def _retry_or_fail(
                     delay,
                     error,
                 )
+
             return
+
         if await queue.mark_failed(session, job, error):
             await session.execute(
                 update(Ticket)
-                .where(Ticket.id == job.ticket_id, Ticket.status == expected_status)
-                .values(status=failed_status, last_error=error, updated_at=func.now())
+                .where(
+                    Ticket.id == job.ticket_id,
+                    Ticket.status == expected_status,
+                )
+                .values(
+                    status=failed_status,
+                    last_error=error,
+                    updated_at=func.now(),
+                )
             )
             log.error(
                 "job %s (%s) failed permanently after %d attempt(s): %s",
@@ -98,22 +122,35 @@ async def handle_generate_draft(ctx: WorkerContext, job: ClaimedJob) -> None:
         "backoff_base": ctx.settings.generation_backoff_base_seconds,
         "backoff_cap": ctx.settings.generation_backoff_cap_seconds,
     }
+    message = ""
+    articles: list[FoundArticle] = []
     async with ctx.sessionmaker() as session:
         ticket = await session.get(Ticket, job.ticket_id)
-        status = ticket.status if ticket else None
-        if status == TicketStatus.NEW:
+        if ticket and ticket.status == TicketStatus.NEW:
             message = ticket.message
-            articles = await search_articles(session, message, ctx.settings.kb_top_k)
+            articles = await search_articles(
+                session, message, ctx.settings.kb_top_k
+            )
     # The DB connection is released here: the LLM call can take up to 30 s.
 
-    if status != TicketStatus.NEW:
-        await _finish_noop(ctx, job, f"ticket status is {status or 'missing'}")
+    if not message:
+        status = ticket.status if ticket else "missing"
+        await _finish_noop(ctx, job, f"ticket status is {status}")
         return
-    if job.attempts > job.max_attempts:  # a worker crashed mid-way on the last attempt
+
+    if (
+        job.attempts > job.max_attempts
+    ):  # a worker crashed mid-way on the last attempt
         await _retry_or_fail(
-            ctx, job, error="attempts exhausted", retryable=False, retry_after=None, **retry_kwargs
+            ctx,
+            job,
+            error="attempts exhausted",
+            retryable=False,
+            retry_after=None,
+            **retry_kwargs,
         )
         return
+
     try:
         result = await ctx.llm.generate_json(
             system=SYSTEM_PROMPT,
@@ -145,11 +182,16 @@ async def handle_generate_draft(ctx: WorkerContext, job: ClaimedJob) -> None:
 
     async with ctx.sessionmaker.begin() as session:
         if not await queue.mark_done(session, job):
-            log.warning("job %s lost its lease; discarding generated draft", job.id)
+            log.warning(
+                "job %s lost its lease; discarding generated draft", job.id
+            )
             return
+
         await session.execute(
             update(Ticket)
-            .where(Ticket.id == job.ticket_id, Ticket.status == TicketStatus.NEW)
+            .where(
+                Ticket.id == job.ticket_id, Ticket.status == TicketStatus.NEW
+            )
             .values(
                 status=TicketStatus.DRAFT_READY,
                 draft_text=draft.text,
@@ -161,6 +203,7 @@ async def handle_generate_draft(ctx: WorkerContext, job: ClaimedJob) -> None:
                 updated_at=func.now(),
             )
         )
+
     log.info(
         "draft ready for ticket %s (model=%s, sources=%s)",
         job.ticket_id,
@@ -172,8 +215,13 @@ async def handle_generate_draft(ctx: WorkerContext, job: ClaimedJob) -> None:
 async def handle_send_reply(ctx: WorkerContext, job: ClaimedJob) -> None:
     async with ctx.sessionmaker() as session:
         ticket = await session.get(Ticket, job.ticket_id)
+
     if ticket is None or ticket.status != TicketStatus.APPROVED:
-        await _finish_noop(ctx, job, f"ticket status is {ticket.status if ticket else 'missing'}")
+        await _finish_noop(
+            ctx,
+            job,
+            f"ticket status is {ticket.status if ticket else 'missing'}",
+        )
         return
 
     retry_kwargs = {
@@ -184,9 +232,15 @@ async def handle_send_reply(ctx: WorkerContext, job: ClaimedJob) -> None:
     }
     if job.attempts > job.max_attempts:
         await _retry_or_fail(
-            ctx, job, error="attempts exhausted", retryable=False, retry_after=None, **retry_kwargs
+            ctx,
+            job,
+            error="attempts exhausted",
+            retryable=False,
+            retry_after=None,
+            **retry_kwargs,
         )
         return
+
     if not ctx.settings.is_reply_url_allowed(ticket.reply_url):
         await _retry_or_fail(
             ctx,
@@ -197,6 +251,7 @@ async def handle_send_reply(ctx: WorkerContext, job: ClaimedJob) -> None:
             **retry_kwargs,
         )
         return
+
     if not ticket.reply_text or ticket.reply_idempotency_key is None:
         await _retry_or_fail(
             ctx,
@@ -233,9 +288,20 @@ async def handle_send_reply(ctx: WorkerContext, job: ClaimedJob) -> None:
         await queue.mark_done(session, job)
         await session.execute(
             update(Ticket)
-            .where(Ticket.id == job.ticket_id, Ticket.status == TicketStatus.APPROVED)
+            .where(
+                Ticket.id == job.ticket_id,
+                Ticket.status == TicketStatus.APPROVED,
+            )
             .values(
-                status=TicketStatus.SENT, sent_at=func.now(), last_error=None, updated_at=func.now()
+                status=TicketStatus.SENT,
+                sent_at=func.now(),
+                last_error=None,
+                updated_at=func.now(),
             )
         )
-    log.info("reply for ticket %s delivered (HTTP %s)", job.ticket_id, outcome.status_code)
+
+    log.info(
+        "reply for ticket %s delivered (HTTP %s)",
+        job.ticket_id,
+        outcome.status_code,
+    )

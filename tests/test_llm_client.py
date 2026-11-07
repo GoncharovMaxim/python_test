@@ -24,10 +24,16 @@ class CountingLimiter:
         self.calls += 1
 
 
-def _client(settings, handler, **overrides) -> tuple[LLMClient, CountingLimiter]:
+def _client(
+    settings, handler, **overrides
+) -> tuple[LLMClient, CountingLimiter]:
     limiter = CountingLimiter()
-    http = anthropic.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(handler))
-    client = LLMClient(settings.model_copy(update=overrides), limiter, http_client=http)
+    http = anthropic.DefaultAsyncHttpxClient(
+        transport=httpx2.MockTransport(handler)
+    )
+    client = LLMClient(
+        settings.model_copy(update=overrides), limiter, http_client=http
+    )
     return client, limiter
 
 
@@ -47,18 +53,25 @@ def _message(text: str, stop_reason: str = "end_turn") -> dict:
     }
 
 
-def _error(status: int, kind: str, headers: dict | None = None) -> httpx2.Response:
+def _error(
+    status: int, kind: str, headers: dict | None = None
+) -> httpx2.Response:
     body = {"type": "error", "error": {"type": kind, "message": kind}}
     return httpx2.Response(status, json=body, headers=headers or {})
 
 
 async def _call(client: LLMClient):
     return await client.generate_json(
-        system="sys", user="question", schema=SCHEMA, stub_response='{"reply": "static"}'
+        system="sys",
+        user="question",
+        schema=SCHEMA,
+        stub_response='{"reply": "static"}',
     )
 
 
-async def test_no_key_mode_sends_real_request_then_returns_static_response(settings):
+async def test_no_key_mode_sends_real_request_then_returns_static_response(
+    settings,
+):
     seen: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -66,7 +79,10 @@ async def test_no_key_mode_sends_real_request_then_returns_static_response(setti
         return _error(401, "authentication_error")
 
     client, limiter = _client(
-        settings, handler, llm_stub_min_delay_seconds=0.2, llm_stub_max_delay_seconds=0.3
+        settings,
+        handler,
+        llm_stub_min_delay_seconds=0.2,
+        llm_stub_max_delay_seconds=0.3,
     )
     assert client.stub_mode
     started = time.monotonic()
@@ -108,24 +124,37 @@ async def test_real_mode_returns_text_block(settings):
     )
     assert not client.stub_mode
     result = await _call(client)
-    assert (result.text, result.model, result.stub) == ('{"reply": "hi"}', "claude-opus-5-5", False)
+    assert (result.text, result.model, result.stub) == (
+        '{"reply": "hi"}',
+        "claude-opus-5-5",
+        False,
+    )
     assert limiter.calls == 1
 
 
 @pytest.mark.parametrize(
     ("response", "error_type", "retry_after"),
     [
-        (_error(429, "rate_limit_error", {"retry-after": "7"}), RetryableLLMError, 7.0),
+        (
+            _error(429, "rate_limit_error", {"retry-after": "7"}),
+            RetryableLLMError,
+            7.0,
+        ),
         (_error(529, "overloaded_error"), RetryableLLMError, None),
         (_error(500, "api_error"), RetryableLLMError, None),
         (_error(400, "invalid_request_error"), PermanentLLMError, None),
         (_error(401, "authentication_error"), PermanentLLMError, None),
     ],
 )
-async def test_real_mode_classifies_errors(settings, response, error_type, retry_after):
-    client, _ = _client(settings, lambda r: response, anthropic_api_key="sk-test")
+async def test_real_mode_classifies_errors(
+    settings, response, error_type, retry_after
+):
+    client, _ = _client(
+        settings, lambda r: response, anthropic_api_key="sk-test"
+    )
     with pytest.raises(error_type) as info:
         await _call(client)
+
     assert info.value.retry_after == retry_after
 
 

@@ -16,7 +16,9 @@ router = APIRouter()
 
 def _unavailable(detail: str) -> JSONResponse:
     return JSONResponse(
-        {"status": "error", "detail": detail}, status_code=503, headers={"Retry-After": "1"}
+        {"status": "error", "detail": detail},
+        status_code=503,
+        headers={"Retry-After": "1"},
     )
 
 
@@ -25,7 +27,9 @@ class HelpdeskEvent(BaseModel):
 
     event_id: str = Field(min_length=1, max_length=255)
     ticket_id: str = Field(min_length=1, max_length=255)
-    customer_email: str = Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+$")
+    customer_email: str = Field(
+        min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+$"
+    )
     message: str = Field(min_length=1, max_length=20_000)
     reply_url: HttpUrl
 
@@ -51,7 +55,10 @@ async def helpdesk_webhook(
     """
     reply_url = str(event.reply_url)
     if not settings.is_reply_url_allowed(reply_url):
-        raise HTTPException(status_code=422, detail="reply_url host is not allowed")
+        raise HTTPException(
+            status_code=422, detail="reply_url host is not allowed"
+        )
+
     try:
         # One deadline for everything: pool checkout, connect, statements, commit.
         async with asyncio.timeout(settings.webhook_timeout_seconds):
@@ -78,7 +85,14 @@ async def helpdesk_webhook(
         return _unavailable("temporarily unavailable")
 
     if created:
-        log.info("accepted event %s (ticket %s)", event.event_id, event.ticket_id)
-        return JSONResponse({"status": "accepted", "event_id": event.event_id}, status_code=202)
+        log.info(
+            "accepted event %s (ticket %s)", event.event_id, event.ticket_id
+        )
+        return JSONResponse(
+            {"status": "accepted", "event_id": event.event_id}, status_code=202
+        )
+
     log.info("duplicate event %s ignored", event.event_id)
-    return JSONResponse({"status": "duplicate", "event_id": event.event_id}, status_code=200)
+    return JSONResponse(
+        {"status": "duplicate", "event_id": event.event_id}, status_code=200
+    )

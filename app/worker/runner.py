@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
@@ -6,7 +8,11 @@ from collections.abc import Awaitable, Callable
 from app import queue
 from app.models import JobKind
 from app.queue import ClaimedJob
-from app.worker.handlers import WorkerContext, handle_generate_draft, handle_send_reply
+from app.worker.handlers import (
+    WorkerContext,
+    handle_generate_draft,
+    handle_send_reply,
+)
 
 log = logging.getLogger(__name__)
 
@@ -16,12 +22,16 @@ Handler = Callable[[WorkerContext, ClaimedJob], Awaitable[None]]
 class Worker:
     """Runs one consumer loop per job kind, each with its own concurrency limit."""
 
-    def __init__(self, ctx: WorkerContext):
+    def __init__(self, ctx: WorkerContext) -> None:
         self.ctx = ctx
         self._stop = asyncio.Event()
         settings = ctx.settings
         self._consumers: list[tuple[JobKind, Handler, int]] = [
-            (JobKind.GENERATE_DRAFT, handle_generate_draft, settings.generation_concurrency),
+            (
+                JobKind.GENERATE_DRAFT,
+                handle_generate_draft,
+                settings.generation_concurrency,
+            ),
             (JobKind.SEND_REPLY, handle_send_reply, settings.send_concurrency),
         ]
 
@@ -36,7 +46,9 @@ class Worker:
         )
         await asyncio.gather(
             *(
-                self._consume(kind, handler, concurrency, shutdown_grace_seconds)
+                self._consume(
+                    kind, handler, concurrency, shutdown_grace_seconds
+                )
                 for kind, handler, concurrency in self._consumers
             )
         )
@@ -57,16 +69,27 @@ class Worker:
             except Exception:
                 log.exception("failed to claim %s job", kind)
                 job = None
+
             if job is None:
                 slots.release()
                 await self._sleep(poll)
                 continue
-            task = asyncio.create_task(self._run_job(handler, job), name=f"{kind}-{job.id}")
+
+            task = asyncio.create_task(
+                self._run_job(handler, job), name=f"{kind}-{job.id}"
+            )
             in_flight.add(task)
-            task.add_done_callback(lambda t: (in_flight.discard(t), slots.release()))
+            task.add_done_callback(
+                lambda t: (in_flight.discard(t), slots.release())
+            )
 
         if in_flight:
-            log.info("waiting up to %.0fs for %d %s job(s)", grace, len(in_flight), kind)
+            log.info(
+                "waiting up to %.0fs for %d %s job(s)",
+                grace,
+                len(in_flight),
+                kind,
+            )
             # Unfinished jobs keep their lease and are picked up again after it expires.
             await asyncio.wait(in_flight, timeout=grace)
 

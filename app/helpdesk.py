@@ -1,5 +1,7 @@
 """Client for the helpdesk reply API."""
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 
@@ -49,14 +51,19 @@ async def send_reply(
         )
     except httpx.TimeoutException as exc:
         return SendOutcome(
-            delivered=False, retryable=True, error=f"timeout, delivery state unknown ({exc!r})"
+            delivered=False,
+            retryable=True,
+            error=f"timeout, delivery state unknown ({exc!r})",
         )
     except httpx.TransportError as exc:
-        return SendOutcome(delivered=False, retryable=True, error=f"transport error: {exc!r}")
+        return SendOutcome(
+            delivered=False, retryable=True, error=f"transport error: {exc!r}"
+        )
 
     code = response.status_code
     if 200 <= code < 300:
         return SendOutcome(delivered=True, status_code=code)
+
     body = response.text[:300]
     retryable = code >= 500 or code in RETRYABLE_STATUSES
     return SendOutcome(

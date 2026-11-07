@@ -19,10 +19,14 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column(
         "tickets",
-        sa.Column("draft_version", sa.Integer, nullable=False, server_default="0"),
+        sa.Column(
+            "draft_version", sa.Integer, nullable=False, server_default="0"
+        ),
     )
     # Existing drafts become version 1, so forms rendered after the upgrade can approve them.
-    op.execute("UPDATE tickets SET draft_version = 1 WHERE draft_text IS NOT NULL")
+    op.execute(
+        "UPDATE tickets SET draft_version = 1 WHERE draft_text IS NOT NULL"
+    )
 
 
 def downgrade() -> None:

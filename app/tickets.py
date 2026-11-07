@@ -4,33 +4,43 @@ Every status transition is a conditional UPDATE (`WHERE status = <expected>`), s
 clicks, concurrent operators and late workers can't move a ticket through a step twice.
 """
 
+from __future__ import annotations
+
+import typing as t
 from dataclasses import dataclass
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import queue
-from app.config import Settings
 from app.models import JobKind, Ticket, TicketStatus
 
+if t.TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
-class TicketNotFound(LookupError):
+    from app.config import Settings
+
+
+class TicketNotFoundError(LookupError):
     pass
 
 
-class InvalidTransition(RuntimeError):
-    def __init__(self, ticket_id: int, action: str, status: str):
-        super().__init__(f"cannot {action} ticket {ticket_id} in status '{status}'")
+class InvalidTransitionError(RuntimeError):
+    def __init__(self, ticket_id: int, action: str, status: str) -> None:
+        super().__init__(
+            f"cannot {action} ticket {ticket_id} in status '{status}'"
+        )
         self.ticket_id = ticket_id
         self.action = action
         self.status = status
 
 
-class StaleDraft(InvalidTransition):
+class StaleDraftError(InvalidTransitionError):
     """The operator acted on a draft that has been replaced since they loaded it."""
 
-    def __init__(self, ticket_id: int, action: str, status: str, seen: int, current: int):
+    def __init__(
+        self, ticket_id: int, action: str, status: str, seen: int, current: int
+    ) -> None:
         super().__init__(ticket_id, action, status)
         self.args = (
             f"cannot {action} ticket {ticket_id}: draft version {seen} is outdated "
@@ -49,7 +59,9 @@ class IncomingEvent:
     reply_url: str
 
 
-async def ingest_event(session: AsyncSession, event: IncomingEvent, settings: Settings) -> bool:
+async def ingest_event(
+    session: AsyncSession, event: IncomingEvent, settings: Settings
+) -> bool:
     """Store the ticket and its generation job atomically. Returns False for duplicates.
 
     Concurrent deliveries of the same event serialize on the unique index: the second one
@@ -80,6 +92,7 @@ async def ingest_event(session: AsyncSession, event: IncomingEvent, settings: Se
             ticket_id=ticket_id,
             max_attempts=settings.generation_max_attempts,
         )
+
     await session.commit()
     return ticket_id is not None
 
@@ -97,6 +110,7 @@ async def _transition(
     conditions = [Ticket.id == ticket_id, Ticket.status.in_(allowed)]
     if draft_version is not None:
         conditions.append(Ticket.draft_version == draft_version)
+
     result = await session.execute(
         update(Ticket)
         .where(*conditions)
@@ -107,14 +121,20 @@ async def _transition(
         await session.rollback()
         row = (
             await session.execute(
-                select(Ticket.status, Ticket.draft_version).where(Ticket.id == ticket_id)
+                select(Ticket.status, Ticket.draft_version).where(
+                    Ticket.id == ticket_id
+                )
             )
         ).first()
         if row is None:
-            raise TicketNotFound(ticket_id)
+            raise TicketNotFoundError(ticket_id)
+
         if row.status in allowed and draft_version is not None:
-            raise StaleDraft(ticket_id, action, row.status, draft_version, row.draft_version)
-        raise InvalidTransition(ticket_id, action, row.status)
+            raise StaleDraftError(
+                ticket_id, action, row.status, draft_version, row.draft_version
+            )
+
+        raise InvalidTransitionError(ticket_id, action, row.status)
 
 
 async def approve(
@@ -127,11 +147,12 @@ async def approve(
     """Approve the draft (optionally edited by the operator) and queue it for sending.
 
     `draft_version` is the version the operator was looking at. If the draft was regenerated
-    since, approval fails with `StaleDraft` instead of sending text based on the old draft.
+    since, approval fails with `StaleDraftError` instead of sending text based on the old draft.
     """
     reply_text = text_override.strip() if text_override is not None else None
     if text_override is not None and not reply_text:
         raise ValueError("reply text must not be empty")
+
     await _transition(
         session,
         ticket_id,
@@ -139,7 +160,9 @@ async def approve(
         TicketStatus.DRAFT_READY,
         {
             "status": TicketStatus.APPROVED,
-            "reply_text": reply_text if reply_text is not None else Ticket.draft_text,
+            "reply_text": reply_text
+            if reply_text is not None
+            else Ticket.draft_text,
             # One key per reply, kept for every retry: the helpdesk dedups on it.
             "reply_idempotency_key": func.coalesce(
                 Ticket.reply_idempotency_key, func.gen_random_uuid()
@@ -158,7 +181,9 @@ async def approve(
     await session.commit()
 
 
-async def reject(session: AsyncSession, ticket_id: int, reason: str | None = None) -> None:
+async def reject(
+    session: AsyncSession, ticket_id: int, reason: str | None = None
+) -> None:
     await _transition(
         session,
         ticket_id,
@@ -173,13 +198,19 @@ async def reject(session: AsyncSession, ticket_id: int, reason: str | None = Non
     await session.commit()
 
 
-async def regenerate(session: AsyncSession, ticket_id: int, settings: Settings) -> None:
+async def regenerate(
+    session: AsyncSession, ticket_id: int, settings: Settings
+) -> None:
     """Ask for a fresh draft. Not allowed once a reply was approved (it may be delivered)."""
     await _transition(
         session,
         ticket_id,
         "regenerate",
-        (TicketStatus.DRAFT_READY, TicketStatus.REJECTED, TicketStatus.GENERATION_FAILED),
+        (
+            TicketStatus.DRAFT_READY,
+            TicketStatus.REJECTED,
+            TicketStatus.GENERATION_FAILED,
+        ),
         {
             "status": TicketStatus.NEW,
             "draft_text": None,
@@ -200,7 +231,9 @@ async def regenerate(session: AsyncSession, ticket_id: int, settings: Settings) 
     await session.commit()
 
 
-async def retry_send(session: AsyncSession, ticket_id: int, settings: Settings) -> None:
+async def retry_send(
+    session: AsyncSession, ticket_id: int, settings: Settings
+) -> None:
     """Re-queue a failed delivery. The idempotency key stays the same, so a reply that
     actually reached the helpdesk earlier will not be duplicated."""
     await _transition(
@@ -222,12 +255,16 @@ async def retry_send(session: AsyncSession, ticket_id: int, settings: Settings) 
 async def get_ticket(session: AsyncSession, ticket_id: int) -> Ticket:
     ticket = await session.get(Ticket, ticket_id)
     if ticket is None:
-        raise TicketNotFound(ticket_id)
+        raise TicketNotFoundError(ticket_id)
+
     return ticket
 
 
 async def list_tickets(
-    session: AsyncSession, status: TicketStatus | None = None, limit: int = 100, offset: int = 0
+    session: AsyncSession,
+    status: TicketStatus | None = None,
+    limit: int = 100,
+    offset: int = 0,
 ) -> list[Ticket]:
     """Newest first; `id` breaks ties so pages never overlap or skip rows."""
     stmt = (
@@ -238,11 +275,14 @@ async def list_tickets(
     )
     if status is not None:
         stmt = stmt.where(Ticket.status == status)
+
     return list((await session.scalars(stmt)).all())
 
 
 async def count_by_status(session: AsyncSession) -> dict[str, int]:
-    rows = await session.execute(select(Ticket.status, func.count()).group_by(Ticket.status))
+    rows = await session.execute(
+        select(Ticket.status, func.count()).group_by(Ticket.status)
+    )
     counts = {s.value: 0 for s in TicketStatus}
-    counts.update({status: n for status, n in rows.all()})
+    counts.update(dict(rows.all()))
     return counts

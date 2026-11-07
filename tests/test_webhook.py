@@ -13,8 +13,11 @@ from tests.conftest import make_event
 
 async def _counts(sessionmaker) -> tuple[int, int]:
     async with sessionmaker() as session:
-        tickets = await session.scalar(select(func.count()).select_from(Ticket))
+        tickets = await session.scalar(
+            select(func.count()).select_from(Ticket)
+        )
         jobs = await session.scalar(select(func.count()).select_from(Job))
+
     return tickets, jobs
 
 
@@ -32,6 +35,7 @@ async def test_new_event_is_stored_with_generation_job(client, sessionmaker):
     async with sessionmaker() as session:
         ticket = (await session.scalars(select(Ticket))).one()
         job = (await session.scalars(select(Job))).one()
+
     assert ticket.event_id == "evt_0001"
     assert ticket.external_ticket_id == "T-1001"
     assert ticket.status == TicketStatus.NEW
@@ -42,7 +46,9 @@ async def test_new_event_is_stored_with_generation_job(client, sessionmaker):
     )
 
 
-async def test_repeated_delivery_is_acknowledged_but_not_stored_twice(client, sessionmaker):
+async def test_repeated_delivery_is_acknowledged_but_not_stored_twice(
+    client, sessionmaker
+):
     first = await client.post("/webhooks/helpdesk", json=make_event())
     second = await client.post("/webhooks/helpdesk", json=make_event())
     assert first.status_code == 202
@@ -51,9 +57,14 @@ async def test_repeated_delivery_is_acknowledged_but_not_stored_twice(client, se
     assert await _counts(sessionmaker) == (1, 1)
 
 
-async def test_concurrent_duplicates_create_exactly_one_ticket(client, sessionmaker):
+async def test_concurrent_duplicates_create_exactly_one_ticket(
+    client, sessionmaker
+):
     responses = await asyncio.gather(
-        *(client.post("/webhooks/helpdesk", json=make_event()) for _ in range(25))
+        *(
+            client.post("/webhooks/helpdesk", json=make_event())
+            for _ in range(25)
+        )
     )
     codes = sorted(r.status_code for r in responses)
     assert codes.count(202) == 1
@@ -61,10 +72,15 @@ async def test_concurrent_duplicates_create_exactly_one_ticket(client, sessionma
     assert await _counts(sessionmaker) == (1, 1)
 
 
-async def test_burst_of_distinct_events_is_fast_and_lossless(client, sessionmaker):
+async def test_burst_of_distinct_events_is_fast_and_lossless(
+    client, sessionmaker
+):
     started = time.monotonic()
     responses = await asyncio.gather(
-        *(client.post("/webhooks/helpdesk", json=make_event(n)) for n in range(1, 101))
+        *(
+            client.post("/webhooks/helpdesk", json=make_event(n))
+            for n in range(1, 101)
+        )
     )
     elapsed = time.monotonic() - started
     assert all(r.status_code == 202 for r in responses)
@@ -74,10 +90,14 @@ async def test_burst_of_distinct_events_is_fast_and_lossless(client, sessionmake
 
 def _app_client(settings, sessionmaker, budget: float) -> httpx.AsyncClient:
     app = create_app(
-        settings=settings.model_copy(update={"webhook_timeout_seconds": budget}),
+        settings=settings.model_copy(
+            update={"webhook_timeout_seconds": budget}
+        ),
         sessionmaker=sessionmaker,
     )
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
 
 
 async def test_webhook_answers_503_in_time_when_no_db_connection_is_free(
@@ -86,12 +106,17 @@ async def test_webhook_answers_503_in_time_when_no_db_connection_is_free(
     """Waiting for a pooled connection counts against the helpdesk's 2 s budget."""
     engine = create_async_engine(database_url, pool_size=1, max_overflow=0)
     try:
-        async with _app_client(settings, make_sessionmaker(engine), budget=0.3) as client:
+        async with _app_client(
+            settings, make_sessionmaker(engine), budget=0.3
+        ) as client:
             async with engine.connect() as held:  # take the only connection
                 await held.execute(text("SELECT 1"))
                 started = time.monotonic()
-                response = await client.post("/webhooks/helpdesk", json=make_event())
+                response = await client.post(
+                    "/webhooks/helpdesk", json=make_event()
+                )
                 elapsed = time.monotonic() - started
+
             assert response.status_code == 503
             assert elapsed < 1.0
             # The helpdesk retries once the pool is free again: nothing was lost.
@@ -99,10 +124,13 @@ async def test_webhook_answers_503_in_time_when_no_db_connection_is_free(
             assert retry.status_code == 202
     finally:
         await engine.dispose()
+
     assert await _counts(sessionmaker) == (1, 1)
 
 
-async def test_webhook_answers_503_in_time_when_insert_is_blocked(engine, settings, sessionmaker):
+async def test_webhook_answers_503_in_time_when_insert_is_blocked(
+    engine, settings, sessionmaker
+):
     """A statement stuck on a lock is cancelled at the budget; the connection stays usable."""
     async with _app_client(settings, sessionmaker, budget=0.3) as client:
         async with engine.connect() as blocker:
@@ -114,22 +142,33 @@ async def test_webhook_answers_503_in_time_when_insert_is_blocked(engine, settin
                 )
             )
             started = time.monotonic()
-            response = await client.post("/webhooks/helpdesk", json=make_event())
+            response = await client.post(
+                "/webhooks/helpdesk", json=make_event()
+            )
             elapsed = time.monotonic() - started
             await tx.rollback()
+
         assert response.status_code == 503
         assert elapsed < 1.0
-        results = [await client.post("/webhooks/helpdesk", json=make_event()) for _ in range(3)]
+        results = [
+            await client.post("/webhooks/helpdesk", json=make_event())
+            for _ in range(3)
+        ]
         assert [r.status_code for r in results] == [202, 200, 200]
+
     assert await _counts(sessionmaker) == (1, 1)
 
 
 async def test_invalid_payload_is_rejected(client, sessionmaker):
     missing = make_event()
     del missing["message"]
-    assert (await client.post("/webhooks/helpdesk", json=missing)).status_code == 422
+    assert (
+        await client.post("/webhooks/helpdesk", json=missing)
+    ).status_code == 422
     bad_email = make_event(customer_email="not-an-email")
-    assert (await client.post("/webhooks/helpdesk", json=bad_email)).status_code == 422
+    assert (
+        await client.post("/webhooks/helpdesk", json=bad_email)
+    ).status_code == 422
     assert await _counts(sessionmaker) == (0, 0)
 
 

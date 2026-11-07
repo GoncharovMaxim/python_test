@@ -4,16 +4,85 @@ version = "0.1.0"
 description = "LLM-drafted support replies with operator moderation"
 requires-python = ">=3.12"
 
+# Code style: .claude/rules/codestyle.md. Hook chain: .pre-commit-config.yaml.
+
 [tool.ruff]
-line-length = 100
+line-length = 79
+# The runtime image is python:3.12 (Dockerfile); a newer target would let ruff
+# suggest syntax that 3.12 cannot run.
 target-version = "py312"
 
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
-ignore = [
-    "RUF001", "RUF002", "RUF003",  # Cyrillic text is intentional
-    "SIM905",  # word lists are easier to maintain as """...""".split()
+select = [
+    "E", "W", "F",
+    "S",     # bandit
+    "B",     # bugbear
+    "A",     # builtins
+    "C4",    # comprehensions
+    "DTZ",   # datetimez
+    "T20",   # print
+    "RET",   # return
+    "SIM",   # simplify
+    "UP",    # pyupgrade
+    "FURB",  # refurb
+    "I",     # isort
+    "N",     # pep8-naming
+    "PTH",   # pathlib
+    "ANN",   # annotations
+    "TC",    # type-checking imports
+    "ICN",   # import conventions: `import typing as t`
+    "ASYNC", # blocking calls inside async code (the whole service is async)
 ]
+ignore = [
+    "E501",            # the formatter owns line length; long strings may exceed it
+    "ANN002", "ANN003",  # pass-through *args / **kwargs stay unannotated
+    "SIM905",          # word lists read better as """...""".split()
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests are not annotated; pytest uses bare asserts; fake secrets are fine.
+"tests/**" = ["ANN", "B017", "F601", "S101", "S105", "S106"]
+# `random` only drives simulated failures (mock), backoff jitter (queue,
+# rate limiter) and simulated LLM latency (client); nothing security-related.
+"helpdesk_mock/**" = ["S311"]
+"app/queue.py" = ["S311"]
+"app/llm/*.py" = ["S311"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "helpdesk_mock", "scripts", "tests"]
+combine-as-imports = true
+
+[tool.ruff.lint.flake8-type-checking]
+strict = true
+# Annotations of these classes are evaluated at runtime (pydantic validation,
+# SQLAlchemy Mapped[...]), so their imports must stay outside TYPE_CHECKING.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+    "sqlalchemy.orm.DeclarativeBase",
+    "app.models.Base",
+]
+
+[tool.ruff.lint.flake8-import-conventions]
+banned-from = ["typing"]
+
+[tool.ruff.lint.flake8-import-conventions.extend-aliases]
+typing = "t"
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["app", "helpdesk_mock", "scripts"]
+exclude = ["migrations", "tests"]
+
+[tool.typos.files]
+extend-exclude = ["kb/*.md", "docs/task.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

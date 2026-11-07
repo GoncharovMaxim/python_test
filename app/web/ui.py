@@ -1,6 +1,7 @@
 """Minimal server-rendered operator UI."""
 
 import math
+from collections.abc import Awaitable
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -42,7 +43,9 @@ def _parse_page(raw: str | None) -> int:
         return 1
 
 
-def list_url(status: str | None, page: int | str | None = None, **params: str) -> str:
+def list_url(
+    status: str | None, page: int | str | None = None, **params: str
+) -> str:
     """URL of the ticket list that keeps the status filter and the page."""
     page_number = _parse_page(str(page) if page is not None else None)
     query = {
@@ -54,16 +57,23 @@ def list_url(status: str | None, page: int | str | None = None, **params: str) -
     return "/ui/tickets" + (f"?{urlencode(query)}" if query else "")
 
 
-def _back(status: str | None, page: str | None, **params: str) -> RedirectResponse:
+def _back(
+    status: str | None, page: str | None, **params: str
+) -> RedirectResponse:
     return RedirectResponse(list_url(status, page, **params), status_code=303)
 
 
-async def _run(action_name: str, coro, status: str | None, page: str | None) -> RedirectResponse:
+async def _run(
+    action_name: str,
+    coro: Awaitable[None],
+    status: str | None,
+    page: str | None,
+) -> RedirectResponse:
     try:
         await coro
-    except tickets.TicketNotFound:
+    except tickets.TicketNotFoundError:
         return _back(status, page, error="Звернення не знайдено.")
-    except tickets.StaleDraft:
+    except tickets.StaleDraftError:
         return _back(
             status,
             page,
@@ -72,11 +82,16 @@ async def _run(action_name: str, coro, status: str | None, page: str | None) -> 
                 "Оновіть сторінку й перевірте текст перед підтвердженням."
             ),
         )
-    except tickets.InvalidTransition as exc:
+    except tickets.InvalidTransitionError as exc:
         label = STATUS_LABELS.get(TicketStatus(exc.status), exc.status)
-        return _back(status, page, error=f"Дію не виконано: звернення вже має статус «{label}».")
+        return _back(
+            status,
+            page,
+            error=f"Дію не виконано: звернення вже має статус «{label}».",
+        )
     except ValueError as exc:
         return _back(status, page, error=str(exc))
+
     return _back(status, page, notice=NOTICES[action_name])
 
 
@@ -93,14 +108,20 @@ async def tickets_page(
     page: str | None = None,
     notice: str | None = None,
     error: str | None = None,
-):
-    selected = TicketStatus(status) if status in TicketStatus._value2member_map_ else None
+) -> HTMLResponse:
+    selected = (
+        TicketStatus(status)
+        if status in TicketStatus._value2member_map_
+        else None
+    )
     status_value = selected.value if selected else None
     counts = await tickets.count_by_status(session)
     total = sum(counts.values())
     matching = counts[selected.value] if selected else total
     pages = max(math.ceil(matching / PAGE_SIZE), 1)
-    current = min(_parse_page(page), pages)  # e.g. the last page emptied by an action
+    current = min(
+        _parse_page(page), pages
+    )  # e.g. the last page emptied by an action
     items = await tickets.list_tickets(
         session, selected, limit=PAGE_SIZE, offset=(current - 1) * PAGE_SIZE
     )
@@ -114,8 +135,12 @@ async def tickets_page(
             "matching": matching,
             "page": current,
             "pages": pages,
-            "prev_url": list_url(status_value, current - 1) if current > 1 else None,
-            "next_url": list_url(status_value, current + 1) if current < pages else None,
+            "prev_url": list_url(status_value, current - 1)
+            if current > 1
+            else None,
+            "next_url": list_url(status_value, current + 1)
+            if current < pages
+            else None,
             "selected": selected,
             "labels": STATUS_LABELS,
             "statuses": list(TicketStatus),
@@ -134,7 +159,7 @@ async def approve(
     draft_version: int = Form(...),
     status: str | None = Form(None),
     page: str | None = Form(None),
-):
+) -> RedirectResponse:
     return await _run(
         "approve",
         tickets.approve(session, ticket_id, settings, text, draft_version),
@@ -150,8 +175,10 @@ async def reject(
     reason: str = Form(""),
     status: str | None = Form(None),
     page: str | None = Form(None),
-):
-    return await _run("reject", tickets.reject(session, ticket_id, reason), status, page)
+) -> RedirectResponse:
+    return await _run(
+        "reject", tickets.reject(session, ticket_id, reason), status, page
+    )
 
 
 @router.post("/ui/tickets/{ticket_id}/regenerate")
@@ -161,8 +188,13 @@ async def regenerate(
     settings: SettingsDep,
     status: str | None = Form(None),
     page: str | None = Form(None),
-):
-    return await _run("regenerate", tickets.regenerate(session, ticket_id, settings), status, page)
+) -> RedirectResponse:
+    return await _run(
+        "regenerate",
+        tickets.regenerate(session, ticket_id, settings),
+        status,
+        page,
+    )
 
 
 @router.post("/ui/tickets/{ticket_id}/retry-send")
@@ -172,5 +204,10 @@ async def retry_send(
     settings: SettingsDep,
     status: str | None = Form(None),
     page: str | None = Form(None),
-):
-    return await _run("retry_send", tickets.retry_send(session, ticket_id, settings), status, page)
+) -> RedirectResponse:
+    return await _run(
+        "retry_send",
+        tickets.retry_send(session, ticket_id, settings),
+        status,
+        page,
+    )

@@ -18,7 +18,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("jobs", sa.Column("lease_token", postgresql.UUID(as_uuid=True)))
+    op.add_column(
+        "jobs", sa.Column("lease_token", postgresql.UUID(as_uuid=True))
+    )
 
 
 def downgrade() -> None:

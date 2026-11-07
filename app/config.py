@@ -9,7 +9,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+asyncpg://support:support@localhost:5432/support"
+    database_url: str = (
+        "postgresql+asyncpg://support:support@localhost:5432/support"
+    )
     db_pool_size: int = 10
 
     # --- LLM -------------------------------------------------------------------------
@@ -55,13 +57,16 @@ class Settings(BaseSettings):
     @property
     def allowed_reply_hosts(self) -> frozenset[str]:
         return frozenset(
-            h.strip().lower() for h in self.reply_url_allowed_hosts.split(",") if h.strip()
+            h.strip().lower()
+            for h in self.reply_url_allowed_hosts.split(",")
+            if h.strip()
         )
 
     def is_reply_url_allowed(self, url: str) -> bool:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             return False
+
         allowed = self.allowed_reply_hosts
         return not allowed or parts.hostname.lower() in allowed
 
