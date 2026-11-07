@@ -10,7 +10,7 @@ from app.kb.text import terms
 from app.models import KbArticle
 
 if t.TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,7 @@ def article_url(base_url: str, slug: str) -> str:
 
 
 async def sync_articles(
-    session: AsyncSession, articles: Sequence[ArticleSource], base_url: str
+    session: AsyncSession, articles: Collection[ArticleSource], base_url: str
 ) -> None:
     """Upsert articles by slug and remove ones that no longer exist on disk."""
     for article in articles:

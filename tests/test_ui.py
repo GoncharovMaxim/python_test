@@ -47,9 +47,8 @@ async def test_pages_split_the_filtered_list_without_gaps_or_overlaps(
     assert [len(x) for x in ids] == [PAGE_SIZE, PAGE_SIZE, 20]
     flat = [i for page in ids for i in page]
     assert len(set(flat)) == len(flat) == 2 * PAGE_SIZE + 20
-    assert flat == sorted(
-        flat, reverse=True
-    )  # newest first, continuous across pages
+    # Newest first, continuous across pages.
+    assert flat == sorted(flat, reverse=True)
     assert "Сторінка 2 з 3 (120 звернень)" in pages[1].text
 
 
@@ -82,9 +81,8 @@ async def test_action_forms_carry_the_current_filter_and_page(
 ):
     await _seed(sessionmaker, new=2 * PAGE_SIZE + 20, rejected=7)
     last_of_all = await client.get("/ui/tickets", params={"page": 3})
-    assert (
-        "/regenerate" in last_of_all.text
-    )  # rejected tickets have action forms
+    # Rejected tickets have action forms.
+    assert "/regenerate" in last_of_all.text
     assert '<input type="hidden" name="page" value="3">' in last_of_all.text
     assert '<input type="hidden" name="status" value="">' in last_of_all.text
 
@@ -97,6 +95,12 @@ async def test_single_page_has_no_pager_and_bad_page_numbers_are_clamped(
     rejected = await client.get("/ui/tickets", params={"status": "rejected"})
     assert len(_ids(rejected.text)) == 7
     assert "Сторінка" not in rejected.text
+    # StrEnum members render as their value, without `.value`.
+    assert '<input type="hidden" name="status" value="rejected">' in (
+        rejected.text
+    )
+    assert 'href="/ui/tickets?status=new"' in rejected.text
+    assert "Відхилено (7)" in rejected.text
 
     too_far = await client.get(
         "/ui/tickets", params={"status": "new", "page": 99}

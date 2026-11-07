@@ -53,6 +53,7 @@ class JobStatus(StrEnum):
 
 
 def _one_of(column: str, values: type[StrEnum]) -> str:
+    # .value on purpose: repr() of a member is "<TicketStatus.NEW: 'new'>".
     return f"{column} IN ({', '.join(repr(v.value) for v in values)})"
 
 

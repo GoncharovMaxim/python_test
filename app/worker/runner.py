@@ -26,14 +26,14 @@ class Worker:
         self.ctx = ctx
         self._stop = asyncio.Event()
         settings = ctx.settings
-        self._consumers: list[tuple[JobKind, Handler, int]] = [
+        self._consumers: tuple[tuple[JobKind, Handler, int], ...] = (
             (
                 JobKind.GENERATE_DRAFT,
                 handle_generate_draft,
                 settings.generation_concurrency,
             ),
             (JobKind.SEND_REPLY, handle_send_reply, settings.send_concurrency),
-        ]
+        )
 
     def stop(self) -> None:
         self._stop.set()
@@ -58,7 +58,7 @@ class Worker:
         self, kind: JobKind, handler: Handler, concurrency: int, grace: float
     ) -> None:
         slots = asyncio.Semaphore(concurrency)
-        in_flight: set[asyncio.Task] = set()
+        in_flight: set[asyncio.Task[None]] = set()
         poll = self.ctx.settings.worker_poll_interval_seconds
         lease = self.ctx.settings.job_lease_seconds
 
@@ -70,7 +70,7 @@ class Worker:
                 log.exception("failed to claim %s job", kind)
                 job = None
 
-            if job is None:
+            if not job:
                 slots.release()
                 await self._sleep(poll)
                 continue

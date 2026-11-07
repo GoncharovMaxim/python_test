@@ -5,7 +5,7 @@ from app.kb.text import stem, terms
 
 @pytest.mark.parametrize(
     ("a", "b"),
-    [
+    (
         ("звіт", "звіти"),
         ("звіту", "звітів"),
         ("експорт", "експортувати"),
@@ -15,7 +15,7 @@ from app.kb.text import stem, terms
         ("рахунок", "рахунку"),
         ("export", "exporting"),
         ("экспорт", "експорт"),  # Russian spelling normalised to Ukrainian
-    ],
+    ),
 )
 def test_word_forms_share_a_stem(a, b):
     assert stem(a) == stem(b)
@@ -30,7 +30,7 @@ def test_apostrophes_are_ignored():
 
 
 @pytest.mark.parametrize(
-    "text", ["a | b & !c", "(звіт):* <-> 'x'", "user@example.com", "😀 PDF!!!"]
+    "text", ("a | b & !c", "(звіт):* <-> 'x'", "user@example.com", "😀 PDF!!!")
 )
 def test_terms_are_safe_for_tsquery(text):
     assert all(t.isalnum() for t in terms(text))

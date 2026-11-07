@@ -134,7 +134,7 @@ async def test_real_mode_returns_text_block(settings):
 
 @pytest.mark.parametrize(
     ("response", "error_type", "retry_after"),
-    [
+    (
         (
             _error(429, "rate_limit_error", {"retry-after": "7"}),
             RetryableLLMError,
@@ -144,7 +144,7 @@ async def test_real_mode_returns_text_block(settings):
         (_error(500, "api_error"), RetryableLLMError, None),
         (_error(400, "invalid_request_error"), PermanentLLMError, None),
         (_error(401, "authentication_error"), PermanentLLMError, None),
-    ],
+    ),
 )
 async def test_real_mode_classifies_errors(
     settings, response, error_type, retry_after
@@ -167,7 +167,7 @@ async def test_real_mode_connection_error_is_retryable(settings):
         await _call(client)
 
 
-@pytest.mark.parametrize("stop_reason", ["refusal", "max_tokens"])
+@pytest.mark.parametrize("stop_reason", ("refusal", "max_tokens"))
 async def test_unusable_stop_reasons_are_permanent(settings, stop_reason):
     client, _ = _client(
         settings,

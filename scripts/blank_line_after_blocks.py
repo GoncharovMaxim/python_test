@@ -62,7 +62,7 @@ def missing_blank_lines(source: str) -> list[int]:
     result: set[int] = set()
     for body in _statement_lists(ast.parse(source)):
         for block, following in itertools.pairwise(body):
-            if not isinstance(block, BLOCKS) or block.end_lineno is None:
+            if not isinstance(block, BLOCKS) or not block.end_lineno:
                 continue
 
             start = _first_line(following)

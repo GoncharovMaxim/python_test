@@ -102,7 +102,7 @@ async def claim(
     async with sessionmaker.begin() as session:
         row = (
             await session.execute(
-                _CLAIM_SQL, {"kind": str(kind), "lease": float(lease_seconds)}
+                _CLAIM_SQL, {"kind": kind, "lease": float(lease_seconds)}
             )
         ).first()
 
@@ -125,7 +125,7 @@ async def _finish(session: AsyncSession, job: ClaimedJob, **values) -> bool:
         .values(updated_at=func.now(), lease_token=None, **values)
         .returning(Job.id)
     )
-    return result.scalar_one_or_none() is not None
+    return bool(result.scalar_one_or_none())
 
 
 async def mark_done(session: AsyncSession, job: ClaimedJob) -> bool:

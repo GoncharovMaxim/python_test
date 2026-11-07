@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 import helpdesk_mock.main as mock
+from tests.conftest import assert_logged
 
 
 @pytest.fixture
@@ -34,12 +35,13 @@ async def test_reply_with_same_idempotency_key_is_stored_once(mock_client):
     assert state.stats["duplicate_messages"] == 0
 
 
-async def test_mock_detects_duplicates_without_key(mock_client):
+async def test_mock_detects_duplicates_without_key(mock_client, caplog):
     client, state = mock_client
     body = {"ticket_id": "T-1", "message": "Відповідь"}
     await client.post("/tickets/T-1/replies", json=body)
     await client.post("/tickets/T-1/replies", json=body)
     assert state.stats["duplicate_messages"] == 1
+    assert_logged(caplog, "ERROR", "DUPLICATE reply to ticket T-1")
 
 
 async def test_mock_failure_does_not_store(mock_client):

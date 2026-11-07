@@ -22,7 +22,7 @@ from app.worker.handlers import (
     handle_send_reply,
 )
 from app.worker.runner import Worker
-from tests.conftest import make_event
+from tests.conftest import assert_logged, make_event
 
 HANDLERS = {
     JobKind.GENERATE_DRAFT: handle_generate_draft,
@@ -180,7 +180,7 @@ async def test_approve_twice_sends_once(client, sessionmaker, make_ctx):
 
 
 async def test_5xx_and_timeouts_are_retried_with_the_same_idempotency_key(
-    client, sessionmaker, make_ctx
+    client, sessionmaker, make_ctx, caplog
 ):
     helpdesk = FakeHelpdesk(503, timeout, 502, 201)
     ctx = make_ctx(helpdesk)
@@ -193,10 +193,11 @@ async def test_5xx_and_timeouts_are_retried_with_the_same_idempotency_key(
     assert len(helpdesk.requests) == 4
     assert set(helpdesk.keys) == {str(ticket.reply_idempotency_key)}
     assert len({r.content for r in helpdesk.requests}) == 1
+    assert assert_logged(caplog, "WARNING", "failed, retry in") == 3
 
 
 async def test_permanent_helpdesk_error_and_manual_retry_keeps_the_key(
-    client, sessionmaker, make_ctx
+    client, sessionmaker, make_ctx, caplog
 ):
     helpdesk = FakeHelpdesk(400, 201)
     ctx = make_ctx(helpdesk)
@@ -208,6 +209,7 @@ async def test_permanent_helpdesk_error_and_manual_retry_keeps_the_key(
     assert failed.status == TicketStatus.SEND_FAILED
     assert "HTTP 400" in failed.last_error
     assert len(helpdesk.requests) == 1  # 4xx is not retried automatically
+    assert_logged(caplog, "ERROR", "failed permanently after 1 attempt(s)")
 
     response = await client.post(f"/api/tickets/{ticket.id}/retry-send")
     assert response.json()["status"] == "approved"
@@ -220,15 +222,14 @@ async def test_permanent_helpdesk_error_and_manual_retry_keeps_the_key(
 
 
 async def test_send_gives_up_after_max_attempts(
-    client, sessionmaker, make_ctx
+    client, sessionmaker, make_ctx, caplog
 ):
     helpdesk = FakeHelpdesk(503)
     ctx = make_ctx(helpdesk)
     ticket = await draft_ready_ticket(client, ctx)
     await client.post(f"/api/tickets/{ticket.id}/approve", json={})
-    async with (
-        sessionmaker.begin() as session
-    ):  # the limit is fixed on the job at approval
+    # The attempt limit is fixed on the job at approval time.
+    async with sessionmaker.begin() as session:
         await session.execute(
             update(Job)
             .where(Job.kind == JobKind.SEND_REPLY)
@@ -238,6 +239,8 @@ async def test_send_gives_up_after_max_attempts(
     await run_jobs(ctx, JobKind.SEND_REPLY)
     assert (await get_ticket(sessionmaker)).status == TicketStatus.SEND_FAILED
     assert len(helpdesk.requests) == 3
+    assert assert_logged(caplog, "WARNING", "failed, retry in") == 2
+    assert_logged(caplog, "ERROR", "failed permanently after 3 attempt(s)")
 
 
 async def test_ticket_approved_by_stale_worker_is_not_sent_twice(
@@ -271,13 +274,14 @@ class FailingLLM:
 
 
 async def test_generation_failure_and_regenerate(
-    client, sessionmaker, make_ctx
+    client, sessionmaker, make_ctx, caplog
 ):
     await client.post("/webhooks/helpdesk", json=make_event())
     await run_jobs(make_ctx(llm=FailingLLM()), JobKind.GENERATE_DRAFT)
     ticket = await get_ticket(sessionmaker)
     assert ticket.status == TicketStatus.GENERATION_FAILED
     assert "HTTP 400" in ticket.last_error
+    assert_logged(caplog, "ERROR", "LLM: provider returned HTTP 400")
 
     assert (
         await client.post(f"/api/tickets/{ticket.id}/approve", json={})
@@ -378,9 +382,8 @@ async def test_approving_while_regeneration_is_running_is_refused(
 ):
     ctx = make_ctx()
     ticket = await draft_ready_ticket(client, ctx)
-    await client.post(
-        f"/api/tickets/{ticket.id}/regenerate"
-    )  # status: new, no draft yet
+    # Status: new, no draft yet.
+    await client.post(f"/api/tickets/{ticket.id}/regenerate")
     response = await client.post(
         f"/ui/tickets/{ticket.id}/approve",
         data={"text": "x", "draft_version": "1"},
@@ -432,7 +435,7 @@ async def test_worker_runner_processes_queue(client, sessionmaker, make_ctx):
 
 
 async def test_stale_generation_cannot_overwrite_regenerated_ticket(
-    client, sessionmaker, make_ctx
+    client, sessionmaker, make_ctx, caplog
 ):
     """Worker A stalls past its lease; B finishes; the operator asks for a new draft and C
     claims it. When A finally finishes, its result must be discarded."""
@@ -455,14 +458,14 @@ async def test_stale_generation_cannot_overwrite_regenerated_ticket(
     fresh = await queue.claim(
         sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60
     )
-    assert (
-        fresh.attempts == stale.attempts
-    )  # same attempt number, different claim
+    # Same attempt number, different claim.
+    assert fresh.attempts == stale.attempts
 
     await handle_generate_draft(ctx, stale)
     ticket = await get_ticket(sessionmaker)
     assert ticket.status == TicketStatus.NEW  # stale result discarded
     assert ticket.draft_text is None
+    assert_logged(caplog, "WARNING", "lost its lease; discarding")
 
     await handle_generate_draft(ctx, fresh)
     ticket = await get_ticket(sessionmaker)

@@ -23,7 +23,7 @@ def create_app(
     """App factory (`uvicorn app.main:create_app --factory`). Tests inject their own DB."""
     settings = settings or get_settings()
     engine = None
-    if sessionmaker is None:
+    if not sessionmaker:
         configure_logging()
         engine = make_engine(
             settings.database_url, pool_size=settings.db_pool_size
@@ -33,7 +33,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         yield
-        if engine is not None:
+        if engine:
             await engine.dispose()
 
     app = FastAPI(title="Support drafts", version="0.1.0", lifespan=lifespan)

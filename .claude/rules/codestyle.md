@@ -281,8 +281,8 @@ Dependencies are pinned in `requirements*.txt` (no uv lock file to validate).
 
 pytest captures log output, but a test that deliberately triggers a warning/error path must still **assert** the log, so an unexpected error can't hide behind an expected one.
 
-- Preferred: pytest's `caplog` fixture. Assert the level and the message.
-- Also acceptable: patch the module's `log` object and assert the call.
+- This is enforced: the autouse fixture `no_unasserted_logs` in `tests/conftest.py` fails any test that leaves a `WARNING` or worse record unasserted.
+- Assert with `assert_logged(caplog, level, fragment)` from `tests/conftest.py`. It checks that the level and message fragment were logged, marks those records as expected, and returns how many matched (`assert assert_logged(...) == 3` for retries).
 - New, unasserted error logs in a test run are a defect to fix in the change that introduced them.
 
 ```python
@@ -296,8 +296,6 @@ async def test_send_gives_up_after_max_attempts(client, make_ctx):
 async def test_send_gives_up_after_max_attempts(client, make_ctx, caplog):
     ...
     assert ticket.status == TicketStatus.SEND_FAILED
-    assert any(
-        r.levelname == "ERROR" and "failed permanently" in r.getMessage()
-        for r in caplog.records
-    )
+    assert assert_logged(caplog, "WARNING", "failed, retry in") == 2
+    assert_logged(caplog, "ERROR", "failed permanently after 3 attempt(s)")
 ```

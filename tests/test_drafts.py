@@ -11,7 +11,7 @@ from app.drafts import (
 )
 from app.kb.repository import FoundArticle
 
-ARTICLES = [
+ARTICLES = (
     FoundArticle(
         "export-pdf",
         "Експорт у PDF",
@@ -20,7 +20,7 @@ ARTICLES = [
         1.0,
     ),
     FoundArticle("billing", "Оплата", "body2", "https://kb.test/billing", 0.5),
-]
+)
 
 
 def test_static_response_goes_through_the_same_parser():
@@ -47,13 +47,13 @@ def test_reply_without_sources_has_no_links_section():
 
 @pytest.mark.parametrize(
     "raw",
-    [
+    (
         "not json",
         "[]",
         '{"sources": [1]}',
         '{"reply": "  ", "sources": []}',
         '{"reply": "x", "sources": 1}',
-    ],
+    ),
 )
 def test_invalid_output_is_rejected(raw):
     with pytest.raises(DraftParseError):

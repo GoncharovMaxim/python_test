@@ -2,6 +2,7 @@
 dropped and re-created). In Docker: `docker compose --profile test run --rm tests`."""
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 
@@ -24,6 +25,35 @@ DEFAULT_TEST_DB = (
     "postgresql+asyncpg://support:support@localhost:5432/support_test"
 )
 ALLOWED_HOST = "helpdesk.test"
+
+
+@pytest.fixture(autouse=True)
+def no_unasserted_logs(caplog):
+    """Warnings and errors a test triggers must be asserted (codestyle: "No Log
+    Noise In Tests"), so an unexpected error can't hide behind an expected one.
+    Use `assert_logged()`, which also marks the record as expected."""
+    yield
+    unexpected = [
+        f"{r.levelname} {r.name}: {r.getMessage()}"
+        for r in caplog.get_records("call")
+        if r.levelno >= logging.WARNING
+    ]
+    assert not unexpected, f"unasserted log records: {unexpected}"
+
+
+def assert_logged(caplog, level, fragment):
+    """Assert a `level` record containing `fragment` was logged and mark it
+    as expected. Returns how many records matched."""
+    matching = [
+        r
+        for r in caplog.records
+        if r.levelname == level and fragment in r.getMessage()
+    ]
+    assert matching, f"no {level} log containing {fragment!r}"
+    for record in matching:
+        caplog.records.remove(record)
+
+    return len(matching)
 
 
 def _run_migrations(url: str) -> None:

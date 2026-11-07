@@ -7,7 +7,7 @@ import typing as t
 from dataclasses import dataclass
 
 if t.TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
     from app.kb.repository import FoundArticle
 
@@ -99,7 +99,7 @@ def _escape(value: str) -> str:
     )
 
 
-def build_user_prompt(message: str, articles: Sequence[FoundArticle]) -> str:
+def build_user_prompt(message: str, articles: Collection[FoundArticle]) -> str:
     if articles:
         kb = "\n".join(
             f'<article number="{i}" title="{_escape(a.title)}">\n{_escape(a.body)}\n</article>'

@@ -30,7 +30,7 @@
   <nav>
     <a href="/ui/tickets" class="{{ 'active' if not selected }}">Усі ({{ total }})</a>
     {% for s in statuses %}
-      <a href="/ui/tickets?status={{ s.value }}" class="{{ 'active' if selected == s }}">{{ labels[s] }} ({{ counts[s.value] }})</a>
+      <a href="/ui/tickets?status={{ s }}" class="{{ 'active' if selected == s }}">{{ labels[s] }} ({{ counts[s] }})</a>
     {% endfor %}
   </nav>
 
@@ -38,7 +38,7 @@
   {% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 
   {# Hidden fields that bring the operator back to the same filter and page after an action. #}
-  {% set keep_view %}<input type="hidden" name="status" value="{{ selected.value if selected else '' }}"><input type="hidden" name="page" value="{{ page }}">{% endset %}
+  {% set keep_view %}<input type="hidden" name="status" value="{{ selected or '' }}"><input type="hidden" name="page" value="{{ page }}">{% endset %}
   {% macro pager() %}
     {% if pages > 1 %}
     <div class="pager">

@@ -28,7 +28,7 @@ def test_adds_blank_line_after_block():
 
 @pytest.mark.parametrize(
     "source",
-    [
+    (
         # already separated
         "if a:\n    b()\n\nc()\n",
         # elif / else / except / finally belong to the block
@@ -38,7 +38,7 @@ def test_adds_blank_line_after_block():
         "def f():\n    for x in y:\n        g(x)\n",
         # a plain statement followed by a block is not this rule's business
         "a = 1\nif a:\n    b()\n",
-    ],
+    ),
 )
 def test_leaves_valid_code_alone(source):
     assert fix_source(source) == source
@@ -46,7 +46,7 @@ def test_leaves_valid_code_alone(source):
 
 @pytest.mark.parametrize(
     ("source", "expected"),
-    [
+    (
         (
             "def f():\n    with a:\n        b()\n    return c\n",
             "def f():\n    with a:\n        b()\n\n    return c\n",
@@ -59,7 +59,7 @@ def test_leaves_valid_code_alone(source):
             "while a:\n    b()\n@dec\ndef f():\n    pass\n",
             "while a:\n    b()\n\n@dec\ndef f():\n    pass\n",
         ),
-    ],
+    ),
 )
 def test_handles_nesting_handlers_and_decorators(source, expected):
     assert fix_source(source) == expected

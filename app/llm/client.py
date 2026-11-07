@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import anthropic
 
 if t.TYPE_CHECKING:
+    from collections.abc import Mapping
+
     import httpx2
 
     from app.config import Settings
@@ -52,13 +54,9 @@ class PermanentLLMError(LLMError):
 
 
 def _retry_after(exc: anthropic.APIStatusError) -> float | None:
-    value = (
-        exc.response.headers.get("retry-after")
-        if exc.response is not None
-        else None
-    )
+    value = exc.response.headers.get("retry-after")
     try:
-        return float(value) if value is not None else None
+        return float(value) if value else None
     except ValueError:
         return None
 
@@ -84,7 +82,7 @@ class LLMClient:
         if settings.anthropic_base_url:
             kwargs["base_url"] = settings.anthropic_base_url
 
-        if http_client is not None:
+        if http_client:
             kwargs["http_client"] = http_client
 
         self._client = anthropic.AsyncAnthropic(**kwargs)
@@ -94,7 +92,7 @@ class LLMClient:
         *,
         system: str,
         user: str,
-        schema: dict[str, t.Any],
+        schema: Mapping[str, t.Any],
         stub_response: str,
     ) -> LLMResult:
         """One rate-limited request returning JSON text that matches `schema`.
@@ -110,7 +108,7 @@ class LLMClient:
         return await self._real_call(request)
 
     def _build_request(
-        self, *, system: str, user: str, schema: dict[str, t.Any]
+        self, *, system: str, user: str, schema: Mapping[str, t.Any]
     ) -> dict[str, t.Any]:
         request: dict[str, t.Any] = {
             "model": self._settings.llm_model,
@@ -130,7 +128,7 @@ class LLMClient:
 
         return request
 
-    async def _real_call(self, request: dict[str, t.Any]) -> LLMResult:
+    async def _real_call(self, request: Mapping[str, t.Any]) -> LLMResult:
         try:
             response = await self._client.beta.messages.create(**request)
         except anthropic.RateLimitError as exc:
@@ -163,7 +161,7 @@ class LLMClient:
         return LLMResult(text=text, model=response.model, stub=False)
 
     async def _stub_call(
-        self, request: dict[str, t.Any], stub_response: str
+        self, request: Mapping[str, t.Any], stub_response: str
     ) -> LLMResult:
         started = time.monotonic()
         target = random.uniform(

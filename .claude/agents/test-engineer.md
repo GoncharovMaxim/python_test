@@ -19,6 +19,10 @@ UI is server-rendered Jinja, tested through HTTP). Before writing tests, read
 `CLAUDE.md` (invariants and commands), `.claude/rules/codestyle.md` (tests are
 not annotated, logs are asserted), and `tests/conftest.py`.
 
+A test that triggers a warning or error must assert it with
+`assert_logged(caplog, level, fragment)`. The autouse fixture
+`no_unasserted_logs` fails the test otherwise.
+
 ## How Tests Work Here
 
 - **Real PostgreSQL, never SQLite.** The code relies on `SKIP LOCKED`,

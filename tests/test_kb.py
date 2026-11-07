@@ -7,7 +7,7 @@ from tests.conftest import ROOT
 
 @pytest.mark.parametrize(
     ("query", "expected_slug"),
-    [
+    (
         ("Не можу експортувати звіт у PDF", "export-report-pdf"),
         ("Як вивантажити таблицю в Excel?", "export-data-excel-csv"),
         ("Забув пароль, лист не приходить", "login-password-2fa"),
@@ -19,7 +19,7 @@ from tests.conftest import ROOT
         ("Як запросити колегу?", "team-invite-roles"),
         ("Не підключається база PostgreSQL, timeout", "connect-data-sources"),
         ("Не могу экспортировать отчет в PDF", "export-report-pdf"),
-    ],
+    ),
 )
 async def test_search_finds_relevant_article(
     sessionmaker, query, expected_slug

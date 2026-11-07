@@ -2,7 +2,7 @@
 
 import typing as t
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Sequence
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -72,7 +72,7 @@ async def list_tickets(
     status: TicketStatus | None = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-) -> list[Ticket]:
+) -> Sequence[Ticket]:
     return await tickets.list_tickets(session, status, limit, offset)
 
 

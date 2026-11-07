@@ -36,7 +36,14 @@ NOTICES = {
 }
 
 
-def _parse_page(raw: str | None) -> int:
+def _parse_status(raw: str | None) -> TicketStatus | None:
+    try:
+        return TicketStatus(raw) if raw else None
+    except ValueError:  # an unknown filter shows all tickets
+        return None
+
+
+def _parse_page(raw: int | str | None) -> int:
     try:
         return max(int(raw or 1), 1)
     except ValueError:
@@ -47,7 +54,7 @@ def list_url(
     status: str | None, page: int | str | None = None, **params: str
 ) -> str:
     """URL of the ticket list that keeps the status filter and the page."""
-    page_number = _parse_page(str(page) if page is not None else None)
+    page_number = _parse_page(page)
     query = {
         "status": status or "",
         "page": str(page_number) if page_number > 1 else "",
@@ -83,7 +90,7 @@ async def _run(
             ),
         )
     except tickets.InvalidTransitionError as exc:
-        label = STATUS_LABELS.get(TicketStatus(exc.status), exc.status)
+        label = STATUS_LABELS.get(exc.status, exc.status)
         return _back(
             status,
             page,
@@ -109,19 +116,13 @@ async def tickets_page(
     notice: str | None = None,
     error: str | None = None,
 ) -> HTMLResponse:
-    selected = (
-        TicketStatus(status)
-        if status in TicketStatus._value2member_map_
-        else None
-    )
-    status_value = selected.value if selected else None
+    selected = _parse_status(status)
     counts = await tickets.count_by_status(session)
     total = sum(counts.values())
-    matching = counts[selected.value] if selected else total
+    matching = counts[selected] if selected else total
     pages = max(math.ceil(matching / PAGE_SIZE), 1)
-    current = min(
-        _parse_page(page), pages
-    )  # e.g. the last page emptied by an action
+    # Clamp, e.g. when an action emptied the last page.
+    current = min(_parse_page(page), pages)
     items = await tickets.list_tickets(
         session, selected, limit=PAGE_SIZE, offset=(current - 1) * PAGE_SIZE
     )
@@ -135,15 +136,15 @@ async def tickets_page(
             "matching": matching,
             "page": current,
             "pages": pages,
-            "prev_url": list_url(status_value, current - 1)
+            "prev_url": list_url(selected, current - 1)
             if current > 1
             else None,
-            "next_url": list_url(status_value, current + 1)
+            "next_url": list_url(selected, current + 1)
             if current < pages
             else None,
             "selected": selected,
             "labels": STATUS_LABELS,
-            "statuses": list(TicketStatus),
+            "statuses": TicketStatus,
             "notice": notice,
             "error": error,
         },

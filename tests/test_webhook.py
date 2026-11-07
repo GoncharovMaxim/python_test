@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.db import make_sessionmaker
 from app.main import create_app
 from app.models import Job, JobKind, JobStatus, Ticket, TicketStatus
-from tests.conftest import make_event
+from tests.conftest import assert_logged, make_event
 
 
 async def _counts(sessionmaker) -> tuple[int, int]:
@@ -101,7 +101,7 @@ def _app_client(settings, sessionmaker, budget: float) -> httpx.AsyncClient:
 
 
 async def test_webhook_answers_503_in_time_when_no_db_connection_is_free(
-    database_url, settings, sessionmaker
+    database_url, settings, sessionmaker, caplog
 ):
     """Waiting for a pooled connection counts against the helpdesk's 2 s budget."""
     engine = create_async_engine(database_url, pool_size=1, max_overflow=0)
@@ -119,6 +119,7 @@ async def test_webhook_answers_503_in_time_when_no_db_connection_is_free(
 
             assert response.status_code == 503
             assert elapsed < 1.0
+            assert_logged(caplog, "WARNING", "not stored within 0.3s")
             # The helpdesk retries once the pool is free again: nothing was lost.
             retry = await client.post("/webhooks/helpdesk", json=make_event())
             assert retry.status_code == 202
@@ -129,7 +130,7 @@ async def test_webhook_answers_503_in_time_when_no_db_connection_is_free(
 
 
 async def test_webhook_answers_503_in_time_when_insert_is_blocked(
-    engine, settings, sessionmaker
+    engine, settings, sessionmaker, caplog
 ):
     """A statement stuck on a lock is cancelled at the budget; the connection stays usable."""
     async with _app_client(settings, sessionmaker, budget=0.3) as client:
@@ -150,6 +151,7 @@ async def test_webhook_answers_503_in_time_when_insert_is_blocked(
 
         assert response.status_code == 503
         assert elapsed < 1.0
+        assert_logged(caplog, "WARNING", "not stored within 0.3s")
         results = [
             await client.post("/webhooks/helpdesk", json=make_event())
             for _ in range(3)

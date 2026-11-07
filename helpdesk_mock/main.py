@@ -21,7 +21,7 @@ import random
 import typing as t
 import uuid
 from collections import Counter
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,7 +32,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-log = logging.getLogger("helpdesk_mock")
+log = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s [mock] %(message)s"
 )
@@ -46,7 +46,7 @@ PUBLIC_BASE_URL = os.getenv(
 WEBHOOK_TIMEOUT_SECONDS = 2.0
 WEBHOOK_MAX_ATTEMPTS = 8
 
-SAMPLE_MESSAGES = [
+SAMPLE_MESSAGES = (
     "Не можу експортувати звіт у PDF",
     "PDF-файл не завантажується, кнопка Завантажити нічого не робить",
     "Як вивантажити таблицю в Excel? У CSV замість кирилиці якісь знаки",
@@ -59,7 +59,7 @@ SAMPLE_MESSAGES = [
     "Звіти не приходять на пошту за розкладом з минулого тижня",
     "Чи можна змінити мову інтерфейсу на англійську?",
     "Дані в дашборді не оновлюються вже два дні",
-]
+)
 
 
 @dataclass
@@ -87,9 +87,9 @@ class State:
     config: Config = field(default_factory=Config)
     replies: list[StoredReply] = field(default_factory=list)
     by_key: dict[str, StoredReply] = field(default_factory=dict)
-    events: list[dict] = field(default_factory=list)
-    stats: Counter = field(default_factory=Counter)
-    tasks: set[asyncio.Task] = field(default_factory=set)
+    events: list[dict[str, str]] = field(default_factory=list)
+    stats: Counter[str] = field(default_factory=Counter)
+    tasks: set[asyncio.Task[None]] = field(default_factory=set)
 
 
 state = State()
@@ -172,7 +172,7 @@ async def create_reply(
 
 
 @app.get("/tickets/{ticket_id}/replies")
-async def list_ticket_replies(ticket_id: str) -> list[dict]:
+async def list_ticket_replies(ticket_id: str) -> list[dict[str, t.Any]]:
     return [asdict(r) for r in state.replies if r.ticket_id == ticket_id]
 
 
@@ -185,7 +185,9 @@ def _spawn(coro: Coroutine[t.Any, t.Any, None]) -> None:
     task.add_done_callback(state.tasks.discard)
 
 
-async def _deliver(client: httpx.AsyncClient, event: dict) -> None:
+async def _deliver(
+    client: httpx.AsyncClient, event: Mapping[str, str]
+) -> None:
     """Deliver like a real helpdesk: wait <= 2 s, retry on anything but 2xx."""
     for attempt in range(1, WEBHOOK_MAX_ATTEMPTS + 1):
         try:
@@ -218,20 +220,20 @@ async def _deliver(client: httpx.AsyncClient, event: dict) -> None:
 
 
 async def _deliver_with_duplicates(
-    event: dict, duplicate_rate: float, delay: float = 0.0
+    event: Mapping[str, str], duplicate_rate: float, delay: float = 0.0
 ) -> None:
     if delay:
         await asyncio.sleep(delay)
 
     async with httpx.AsyncClient() as client:
         deliveries = [_deliver(client, event)]
-        if random.random() < duplicate_rate:  # the same event, concurrently
+        # The same event, concurrently.
+        if random.random() < duplicate_rate:
             state.stats["webhook_concurrent_duplicates"] += 1
             deliveries.append(_deliver(client, event))
 
-        if (
-            random.random() < duplicate_rate
-        ):  # the same event again, a bit later
+        # The same event again, a bit later.
+        if random.random() < duplicate_rate:
             state.stats["webhook_late_duplicates"] += 1
 
             async def late() -> None:
@@ -243,7 +245,9 @@ async def _deliver_with_duplicates(
         await asyncio.gather(*deliveries)
 
 
-def _new_event(message: str | None = None, email: str | None = None) -> dict:
+def _new_event(
+    message: str | None = None, email: str | None = None
+) -> dict[str, str]:
     ticket_id = f"T-{next(_ticket_numbers)}"
     event = {
         "event_id": f"evt_{uuid.uuid4().hex[:12]}",
@@ -269,14 +273,14 @@ class BurstIn(BaseModel):
 
 
 @app.post("/simulate/ticket")
-async def simulate_ticket(body: TicketIn) -> dict:
+async def simulate_ticket(body: TicketIn) -> dict[str, str]:
     event = _new_event(body.message, body.customer_email)
     _spawn(_deliver_with_duplicates(event, body.duplicate_rate))
     return event
 
 
 @app.post("/simulate/burst")
-async def simulate_burst(body: BurstIn) -> dict:
+async def simulate_burst(body: BurstIn) -> dict[str, float]:
     for _ in range(body.count):
         event = _new_event()
         delay = (
@@ -296,7 +300,7 @@ class ConfigIn(BaseModel):
 
 
 @app.post("/config")
-async def update_config(body: ConfigIn) -> dict:
+async def update_config(body: ConfigIn) -> dict[str, float]:
     for name, value in body.model_dump(exclude_none=True).items():
         setattr(state.config, name, value)
 
@@ -304,10 +308,10 @@ async def update_config(body: ConfigIn) -> dict:
 
 
 @app.get("/api/state")
-async def get_state() -> dict:
+async def get_state() -> dict[str, t.Any]:
     return {
         "config": asdict(state.config),
-        "stats": dict(state.stats),
+        "stats": state.stats,
         "replies": [asdict(r) for r in state.replies],
         "events": state.events,
     }
@@ -324,8 +328,8 @@ async def index(request: Request) -> HTMLResponse:
         {
             "config": state.config,
             "stats": dict(sorted(state.stats.items())),
-            "replies": list(reversed(state.replies[-50:])),
-            "events": list(reversed(state.events[-50:])),
+            "replies": reversed(state.replies[-50:]),
+            "events": reversed(state.events[-50:]),
             "samples": SAMPLE_MESSAGES,
             "webhook_url": WEBHOOK_URL,
         },

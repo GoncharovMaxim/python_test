@@ -16,9 +16,14 @@ from app import queue
 from app.models import JobKind, Ticket, TicketStatus
 
 if t.TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.config import Settings
+
+
+STATEMENT_TIMEOUT_MARGIN = 0.5  # seconds past the webhook deadline
 
 
 class TicketNotFoundError(LookupError):
@@ -67,9 +72,12 @@ async def ingest_event(
     Concurrent deliveries of the same event serialize on the unique index: the second one
     waits for the first to commit and then inserts nothing.
     """
-    # The caller enforces the total deadline client-side (incl. waiting for a connection);
-    # this makes Postgres abandon the work too, instead of finishing it for nobody.
-    timeout_ms = max(int(settings.webhook_timeout_seconds * 1000), 1)
+    # The caller enforces the total deadline client-side (incl. waiting for a
+    # connection). This is only a backstop that stops Postgres from finishing
+    # abandoned work. It is set slightly later, so the caller's deadline always
+    # fires first and a timeout is always reported the same way.
+    backstop = settings.webhook_timeout_seconds + STATEMENT_TIMEOUT_MARGIN
+    timeout_ms = int(backstop * 1000)
     await session.execute(text(f"SET LOCAL statement_timeout = {timeout_ms}"))
     stmt = (
         pg_insert(Ticket)
@@ -85,7 +93,7 @@ async def ingest_event(
         .returning(Ticket.id)
     )
     ticket_id = (await session.execute(stmt)).scalar_one_or_none()
-    if ticket_id is not None:
+    if ticket_id:
         await queue.enqueue(
             session,
             kind=JobKind.GENERATE_DRAFT,
@@ -94,7 +102,7 @@ async def ingest_event(
         )
 
     await session.commit()
-    return ticket_id is not None
+    return bool(ticket_id)
 
 
 async def _transition(
@@ -102,12 +110,13 @@ async def _transition(
     ticket_id: int,
     action: str,
     expected: TicketStatus | tuple[TicketStatus, ...],
-    values: dict,
+    values: Mapping[str, t.Any],
     draft_version: int | None = None,
 ) -> None:
     """Conditional UPDATE. With `draft_version`, it also requires the draft the caller saw."""
     allowed = expected if isinstance(expected, tuple) else (expected,)
     conditions = [Ticket.id == ticket_id, Ticket.status.in_(allowed)]
+    # Exact check: version 0 is a real value (no draft yet), not "skip".
     if draft_version is not None:
         conditions.append(Ticket.draft_version == draft_version)
 
@@ -117,7 +126,7 @@ async def _transition(
         .values(updated_at=func.now(), **values)
         .returning(Ticket.id)
     )
-    if result.scalar_one_or_none() is None:
+    if not result.scalar_one_or_none():
         await session.rollback()
         row = (
             await session.execute(
@@ -126,7 +135,7 @@ async def _transition(
                 )
             )
         ).first()
-        if row is None:
+        if not row:
             raise TicketNotFoundError(ticket_id)
 
         if row.status in allowed and draft_version is not None:
@@ -149,6 +158,7 @@ async def approve(
     `draft_version` is the version the operator was looking at. If the draft was regenerated
     since, approval fails with `StaleDraftError` instead of sending text based on the old draft.
     """
+    # None = send the draft as is; "" = the operator erased the text: error.
     reply_text = text_override.strip() if text_override is not None else None
     if text_override is not None and not reply_text:
         raise ValueError("reply text must not be empty")
@@ -160,9 +170,7 @@ async def approve(
         TicketStatus.DRAFT_READY,
         {
             "status": TicketStatus.APPROVED,
-            "reply_text": reply_text
-            if reply_text is not None
-            else Ticket.draft_text,
+            "reply_text": reply_text or Ticket.draft_text,
             # One key per reply, kept for every retry: the helpdesk dedups on it.
             "reply_idempotency_key": func.coalesce(
                 Ticket.reply_idempotency_key, func.gen_random_uuid()
@@ -254,7 +262,7 @@ async def retry_send(
 
 async def get_ticket(session: AsyncSession, ticket_id: int) -> Ticket:
     ticket = await session.get(Ticket, ticket_id)
-    if ticket is None:
+    if not ticket:
         raise TicketNotFoundError(ticket_id)
 
     return ticket
@@ -265,7 +273,7 @@ async def list_tickets(
     status: TicketStatus | None = None,
     limit: int = 100,
     offset: int = 0,
-) -> list[Ticket]:
+) -> Sequence[Ticket]:
     """Newest first; `id` breaks ties so pages never overlap or skip rows."""
     stmt = (
         select(Ticket)
@@ -273,16 +281,16 @@ async def list_tickets(
         .limit(limit)
         .offset(offset)
     )
-    if status is not None:
+    if status:
         stmt = stmt.where(Ticket.status == status)
 
-    return list((await session.scalars(stmt)).all())
+    return (await session.scalars(stmt)).all()
 
 
 async def count_by_status(session: AsyncSession) -> dict[str, int]:
     rows = await session.execute(
         select(Ticket.status, func.count()).group_by(Ticket.status)
     )
-    counts = {s.value: 0 for s in TicketStatus}
+    counts: dict[str, int] = dict.fromkeys(TicketStatus, 0)
     counts.update(dict(rows.all()))
     return counts

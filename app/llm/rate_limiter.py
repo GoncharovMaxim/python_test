@@ -53,6 +53,7 @@ class PostgresRateLimiter:
         """Wait until a slot is free in the current window, then take it."""
         while True:
             wait = await self._try_acquire()
+            # Exact check: a wait of 0.0 means "retry right away".
             if wait is None:
                 return
 

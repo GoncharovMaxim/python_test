@@ -16,7 +16,7 @@ class ArticleSource:
 def parse_article(text: str, default_slug: str) -> ArticleSource:
     meta: dict[str, str] = {}
     body = text
-    lines = text.lstrip("﻿").splitlines()
+    lines = text.lstrip("\ufeff").splitlines()  # tolerate a UTF-8 BOM
     if lines and lines[0].strip() == "---":
         try:
             end = next(
