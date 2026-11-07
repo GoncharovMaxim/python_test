@@ -26,6 +26,7 @@ class TicketOut(BaseModel):
     draft_text: str | None
     draft_sources: list[dict[str, Any]]
     draft_model: str | None
+    draft_version: int
     reply_text: str | None
     reply_idempotency_key: uuid.UUID | None
     rejection_reason: str | None
@@ -38,6 +39,8 @@ class TicketOut(BaseModel):
 
 class ApproveIn(BaseModel):
     text: str | None = None  # None = send the draft as is
+    # Version of the draft the operator reviewed; if it changed since, 409 instead of sending.
+    draft_version: int | None = None
 
 
 class RejectIn(BaseModel):
@@ -88,7 +91,9 @@ async def _act_and_return(session, ticket_id: int, action) -> Any:
 @router.post("/tickets/{ticket_id}/approve", response_model=TicketOut)
 async def approve(ticket_id: int, body: ApproveIn, session: SessionDep, settings: SettingsDep):
     return await _act_and_return(
-        session, ticket_id, tickets.approve(session, ticket_id, settings, body.text)
+        session,
+        ticket_id,
+        tickets.approve(session, ticket_id, settings, body.text, body.draft_version),
     )
 
 

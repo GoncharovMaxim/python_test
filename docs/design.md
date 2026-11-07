@@ -53,7 +53,8 @@ Zendesk, Intercom тощо) і реалізуємо її в моку. Якщо �
 ## 3. Модель даних
 
 - `tickets`: одне звернення (одна подія вебхука). Поля чернетки (`draft_text`,
-  `draft_sources`), фінальний текст (`reply_text`), `reply_idempotency_key`, статуси й часові мітки.
+  `draft_sources`, `draft_version`), фінальний текст (`reply_text`), `reply_idempotency_key`,
+  статуси й часові мітки.
 - `jobs`: черга. `(ticket_id, kind)` унікальні. Поля: `status`, `attempts`, `max_attempts`,
   `available_at`, `lease_token`, `last_error`.
 - `kb_articles`: статті бази знань + згенерована колонка `search_vector tsvector` (GIN).
@@ -75,6 +76,12 @@ Zendesk, Intercom тощо) і реалізуємо її в моку. Якщо �
 
 Усі переходи робляться через `UPDATE tickets SET status = :new WHERE id = :id AND status = :expected`.
 Якщо оновлено 0 рядків, дія відхиляється (HTTP 409 в API, повідомлення в UI).
+
+**Версія чернетки.** Кожна згенерована чернетка збільшує `draft_version`. Форма підтвердження
+несе версію, яку бачив оператор, і approve додає умову `AND draft_version = :seen`. Сценарій, від
+якого це захищає: оператор A відкрив чернетку v1, оператор B натиснув «Згенерувати знову», і
+з'явилась v2. Без перевірки A надіслав би клієнту текст на основі v1. З нею A бачить «Чернетку
+змінено, оновіть сторінку» (у JSON API це `409`; там `draft_version` необов'язковий).
 
 ### Черга задач
 

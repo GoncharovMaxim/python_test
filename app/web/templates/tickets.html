@@ -42,13 +42,14 @@
       #{{ t.id }} · тікет <b>{{ t.external_ticket_id }}</b> · {{ t.customer_email }} ·
       {{ t.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC ·
       <span class="status status-{{ t.status }}">{{ labels[t.status] }}</span>
-      {% if t.draft_model %} · модель: {{ t.draft_model }}{% endif %}
+      {% if t.draft_model %} · модель: {{ t.draft_model }} · версія чернетки {{ t.draft_version }}{% endif %}
     </div>
     <p class="message">{{ t.message }}</p>
 
     {% if t.status == 'draft_ready' %}
       <form method="post" action="/ui/tickets/{{ t.id }}/approve">
         <input type="hidden" name="status" value="{{ selected.value if selected else '' }}">
+        <input type="hidden" name="draft_version" value="{{ t.draft_version }}">
         <label>Чернетка (можна редагувати перед надсиланням):</label>
         <textarea name="text" rows="12" required>{{ t.draft_text }}</textarea>
         <div class="actions"><button type="submit">✅ Підтвердити й надіслати</button></div>

@@ -6,6 +6,7 @@ The helpdesk reply API is replaced by an httpx MockTransport scripted per test.
 import asyncio
 import json
 from collections.abc import Callable
+from urllib.parse import unquote_plus
 
 import httpx
 import pytest
@@ -249,15 +250,56 @@ async def test_ui_flow(client, sessionmaker, make_ctx):
     assert page.status_code == 200
     assert "Не можу експортувати звіт у PDF" in page.text
     assert f"/ui/tickets/{ticket.id}/approve" in page.text
+    assert '<input type="hidden" name="draft_version" value="1">' in page.text
 
-    response = await client.post(
-        f"/ui/tickets/{ticket.id}/approve", data={"text": "Готова відповідь", "status": ""}
-    )
+    form = {"text": "Готова відповідь", "draft_version": "1", "status": ""}
+    response = await client.post(f"/ui/tickets/{ticket.id}/approve", data=form)
     assert response.status_code == 303
     assert "notice=" in response.headers["location"]
-    again = await client.post(f"/ui/tickets/{ticket.id}/approve", data={"text": "x"})
+    again = await client.post(f"/ui/tickets/{ticket.id}/approve", data={**form, "text": "x"})
     assert "error=" in again.headers["location"]
     assert (await get_ticket(sessionmaker)).reply_text == "Готова відповідь"
+
+
+async def test_approving_an_outdated_draft_is_refused(client, sessionmaker, make_ctx):
+    """Operator A loads draft v1; operator B regenerates it; A's approval must not send
+    text based on v1."""
+    ctx = make_ctx()
+    ticket = await draft_ready_ticket(client, ctx)
+    assert ticket.draft_version == 1
+    await client.post(f"/api/tickets/{ticket.id}/regenerate")
+    await run_jobs(ctx, JobKind.GENERATE_DRAFT)
+    assert (await get_ticket(sessionmaker)).draft_version == 2
+
+    # UI: stale form -> asked to reload, nothing approved
+    stale_form = {"text": "Текст на основі v1", "draft_version": "1", "status": ""}
+    response = await client.post(f"/ui/tickets/{ticket.id}/approve", data=stale_form)
+    assert response.status_code == 303
+    location = unquote_plus(response.headers["location"])
+    assert "Оновіть сторінку" in location
+    # API: same check, 409
+    stale = await client.post(
+        f"/api/tickets/{ticket.id}/approve", json={"text": "v1", "draft_version": 1}
+    )
+    assert stale.status_code == 409
+    assert "outdated" in stale.json()["detail"]
+    assert (await get_ticket(sessionmaker)).status == TicketStatus.DRAFT_READY
+
+    current = await client.post(
+        f"/api/tickets/{ticket.id}/approve", json={"text": "v2", "draft_version": 2}
+    )
+    assert current.status_code == 200
+    assert current.json()["reply_text"] == "v2"
+
+
+async def test_approving_while_regeneration_is_running_is_refused(client, make_ctx):
+    ctx = make_ctx()
+    ticket = await draft_ready_ticket(client, ctx)
+    await client.post(f"/api/tickets/{ticket.id}/regenerate")  # status: new, no draft yet
+    response = await client.post(
+        f"/ui/tickets/{ticket.id}/approve", data={"text": "x", "draft_version": "1"}
+    )
+    assert "Генерується чернетка" in unquote_plus(response.headers["location"])
 
 
 async def test_worker_runner_processes_queue(client, sessionmaker, make_ctx):
@@ -302,7 +344,7 @@ async def test_stale_generation_cannot_overwrite_regenerated_ticket(client, sess
     takeover = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60)
     await handle_generate_draft(ctx, takeover)
     ticket = await get_ticket(sessionmaker)
-    assert ticket.status == TicketStatus.DRAFT_READY
+    assert (ticket.status, ticket.draft_version) == (TicketStatus.DRAFT_READY, 1)
 
     await client.post(f"/api/tickets/{ticket.id}/regenerate")
     fresh = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60)
@@ -315,7 +357,7 @@ async def test_stale_generation_cannot_overwrite_regenerated_ticket(client, sess
 
     await handle_generate_draft(ctx, fresh)
     ticket = await get_ticket(sessionmaker)
-    assert ticket.status == TicketStatus.DRAFT_READY
+    assert (ticket.status, ticket.draft_version) == (TicketStatus.DRAFT_READY, 2)
 
 
 async def test_stale_draft_is_not_written_after_regenerate(client, sessionmaker, make_ctx):

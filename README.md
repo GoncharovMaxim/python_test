@@ -145,7 +145,7 @@ Swagger з усіма ендпоінтами: http://localhost:8000/docs.
 | `GET` | `/api/tickets?status=&limit=` | список звернень |
 | `GET` | `/api/tickets/{id}` | одне звернення |
 | `GET` | `/api/stats` | кількість звернень за статусами |
-| `POST` | `/api/tickets/{id}/approve` | `{"text": "..."}` або `{}` (надіслати чернетку як є) |
+| `POST` | `/api/tickets/{id}/approve` | `{"text": "...", "draft_version": N}` або `{}` (надіслати чернетку як є). Якщо `draft_version` застарів, `409` |
 | `POST` | `/api/tickets/{id}/reject` | `{"reason": "..."}` |
 | `POST` | `/api/tickets/{id}/regenerate` | нова чернетка (з `draft_ready`, `rejected`, `generation_failed`) |
 | `POST` | `/api/tickets/{id}/retry-send` | повторити надсилання з `send_failed` (той самий ключ ідемпотентності) |

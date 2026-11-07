@@ -155,6 +155,7 @@ async def handle_generate_draft(ctx: WorkerContext, job: ClaimedJob) -> None:
                 draft_text=draft.text,
                 draft_sources=[s.as_dict() for s in draft.sources],
                 draft_model=result.model,
+                draft_version=Ticket.draft_version + 1,
                 draft_generated_at=func.now(),
                 last_error=None,
                 updated_at=func.now(),

@@ -43,6 +43,14 @@ async def _run(action_name: str, coro, status: str | None) -> RedirectResponse:
         await coro
     except tickets.TicketNotFound:
         return _back(status, error="Звернення не знайдено.")
+    except tickets.StaleDraft:
+        return _back(
+            status,
+            error=(
+                "Чернетку змінено, поки сторінка була відкрита: згенеровано нову версію. "
+                "Оновіть сторінку й перевірте текст перед підтвердженням."
+            ),
+        )
     except tickets.InvalidTransition as exc:
         label = STATUS_LABELS.get(TicketStatus(exc.status), exc.status)
         return _back(status, error=f"Дію не виконано: звернення вже має статус «{label}».")
@@ -89,9 +97,12 @@ async def approve(
     session: SessionDep,
     settings: SettingsDep,
     text: str = Form(...),
+    draft_version: int = Form(...),
     status: str | None = Form(None),
 ):
-    return await _run("approve", tickets.approve(session, ticket_id, settings, text), status)
+    return await _run(
+        "approve", tickets.approve(session, ticket_id, settings, text, draft_version), status
+    )
 
 
 @router.post("/ui/tickets/{ticket_id}/reject")

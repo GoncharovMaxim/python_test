@@ -27,6 +27,19 @@ class InvalidTransition(RuntimeError):
         self.status = status
 
 
+class StaleDraft(InvalidTransition):
+    """The operator acted on a draft that has been replaced since they loaded it."""
+
+    def __init__(self, ticket_id: int, action: str, status: str, seen: int, current: int):
+        super().__init__(ticket_id, action, status)
+        self.args = (
+            f"cannot {action} ticket {ticket_id}: draft version {seen} is outdated "
+            f"(current version is {current}), reload the ticket",
+        )
+        self.seen_version = seen
+        self.current_version = current
+
+
 @dataclass(frozen=True)
 class IncomingEvent:
     event_id: str
@@ -77,26 +90,45 @@ async def _transition(
     action: str,
     expected: TicketStatus | tuple[TicketStatus, ...],
     values: dict,
+    draft_version: int | None = None,
 ) -> None:
+    """Conditional UPDATE. With `draft_version`, it also requires the draft the caller saw."""
     allowed = expected if isinstance(expected, tuple) else (expected,)
+    conditions = [Ticket.id == ticket_id, Ticket.status.in_(allowed)]
+    if draft_version is not None:
+        conditions.append(Ticket.draft_version == draft_version)
     result = await session.execute(
         update(Ticket)
-        .where(Ticket.id == ticket_id, Ticket.status.in_(allowed))
+        .where(*conditions)
         .values(updated_at=func.now(), **values)
         .returning(Ticket.id)
     )
     if result.scalar_one_or_none() is None:
         await session.rollback()
-        status = await session.scalar(select(Ticket.status).where(Ticket.id == ticket_id))
-        if status is None:
+        row = (
+            await session.execute(
+                select(Ticket.status, Ticket.draft_version).where(Ticket.id == ticket_id)
+            )
+        ).first()
+        if row is None:
             raise TicketNotFound(ticket_id)
-        raise InvalidTransition(ticket_id, action, status)
+        if row.status in allowed and draft_version is not None:
+            raise StaleDraft(ticket_id, action, row.status, draft_version, row.draft_version)
+        raise InvalidTransition(ticket_id, action, row.status)
 
 
 async def approve(
-    session: AsyncSession, ticket_id: int, settings: Settings, text_override: str | None = None
+    session: AsyncSession,
+    ticket_id: int,
+    settings: Settings,
+    text_override: str | None = None,
+    draft_version: int | None = None,
 ) -> None:
-    """Approve the draft (optionally edited by the operator) and queue it for sending."""
+    """Approve the draft (optionally edited by the operator) and queue it for sending.
+
+    `draft_version` is the version the operator was looking at. If the draft was regenerated
+    since, approval fails with `StaleDraft` instead of sending text based on the old draft.
+    """
     reply_text = text_override.strip() if text_override is not None else None
     if text_override is not None and not reply_text:
         raise ValueError("reply text must not be empty")
@@ -115,6 +147,7 @@ async def approve(
             "approved_at": func.now(),
             "last_error": None,
         },
+        draft_version=draft_version,
     )
     await queue.enqueue(
         session,

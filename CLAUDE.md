@@ -56,9 +56,10 @@ tests/               pytest suite against a real Postgres
 5. **No-key mode.** Without `ANTHROPIC_API_KEY` the client still sends the real request
    to the provider, ignores the result, and returns the static response after a
    random 5–30 s delay. The rest of the pipeline parses it exactly like a real response.
-6. **No duplicate replies.** One `Idempotency-Key` per ticket, created at approval and
-   reused for every retry. All status transitions are conditional
-   `UPDATE ... WHERE status = <expected>`.
+6. **No duplicate or stale replies.** One `Idempotency-Key` per ticket, created at approval
+   and reused for every retry. All status transitions are conditional
+   `UPDATE ... WHERE status = <expected>`. Each generated draft bumps `draft_version`. The UI
+   approves only the version the operator saw; a stale version gets "reload the page".
 7. **Untrusted input.** Customer text stays delimited in the prompt. Links in drafts come
    only from KB rows (the model returns article numbers, never URLs).
 

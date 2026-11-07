@@ -75,6 +75,8 @@ class Ticket(Base):
         JSONB, default=list, server_default=text("'[]'::jsonb")
     )
     draft_model: Mapped[str | None] = mapped_column(String(100))
+    # Incremented on every generated draft; approval must name the version it approves.
+    draft_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     draft_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     reply_text: Mapped[str | None] = mapped_column(Text)
