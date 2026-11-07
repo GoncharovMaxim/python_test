@@ -2,9 +2,15 @@ x-app: &app
   build:
     context: .
     target: runtime
+  # Every setting from .env (see .env.example) reaches the containers; without the file
+  # the stack still starts with defaults. Needs Docker Compose >= 2.24.
+  env_file:
+    - path: .env
+      required: false
+  # `environment` wins over env_file: these values are tied to the compose network.
   environment: &app-env
     DATABASE_URL: postgresql+asyncpg://support:support@db:5432/support
-    REPLY_URL_ALLOWED_HOSTS: helpdesk-mock,helpdesk.example.com
+    REPLY_URL_ALLOWED_HOSTS: ${REPLY_URL_ALLOWED_HOSTS:-helpdesk-mock,helpdesk.example.com}
   restart: unless-stopped
 
 services:
@@ -53,8 +59,9 @@ services:
     stop_grace_period: 40s
     environment:
       <<: *app-env
+      # Also accept a key exported in the shell (`ANTHROPIC_API_KEY=... docker compose up`);
+      # a key in .env arrives both here and via env_file.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-claude-opus-5-5}
     depends_on:
       migrate:
         condition: service_completed_successfully

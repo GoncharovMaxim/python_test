@@ -14,7 +14,7 @@
 
 ### Вимоги
 
-- Docker 24+ і Docker Compose v2 (`docker compose version`).
+- Docker 24+ і Docker Compose v2.24+ (`docker compose version`): потрібен для `env_file` з `required: false`.
 - Вільні порти `8000` (сервіс) і `8001` (мок хелпдеску).
 - API-ключ Anthropic **не обов'язковий**.
 
@@ -23,7 +23,7 @@
 ```bash
 git clone <repo-url> support-drafts
 cd support-drafts
-cp .env.example .env          # необов'язково: тут можна вказати ANTHROPIC_API_KEY
+cp .env.example .env          # необов'язково: ANTHROPIC_API_KEY та будь-які налаштування з app/config.py
 docker compose up --build
 ```
 
@@ -194,6 +194,9 @@ Swagger з усіма ендпоінтами: http://localhost:8000/docs.
 ## Конфігурація
 
 Усі параметри задаються змінними оточення (див. [app/config.py](app/config.py), [.env.example](.env.example)).
+Compose передає весь `.env` у контейнери сервісу через `env_file` (`required: false`), тож без файлу
+все теж запускається, із значеннями за замовчуванням. Змінні з `environment` у compose
+(`DATABASE_URL`, адреси моку) мають пріоритет над `.env`. Після зміни `.env`: `docker compose up -d`.
 
 | Змінна | За замовчуванням | Опис |
 |---|---|---|
@@ -227,7 +230,7 @@ Swagger з усіма ендпоінтами: http://localhost:8000/docs.
 docker compose --profile test run --rm tests
 ```
 
-Що покрито (79 тестів): одночасні дублікати вебхука (25 паралельних доставок дають 1 звернення),
+Що покрито (91 тест): одночасні дублікати вебхука (25 паралельних доставок дають 1 звернення),
 пік із 100 подій, конкурентний claim черги, протухлий lease і fencing, глобальний rate limiter
 між кількома інстансами, LLM-клієнт (no-key режим справді шле запит, класифікація помилок,
 refusal), парсинг чернеток і екранування prompt injection, повний сценарій вебхук → чернетка →
