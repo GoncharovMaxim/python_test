@@ -293,6 +293,31 @@ async def test_worker_runner_processes_queue(client, sessionmaker, make_ctx):
     assert len(helpdesk.requests) == 5
 
 
+async def test_stale_generation_cannot_overwrite_regenerated_ticket(client, sessionmaker, make_ctx):
+    """Worker A stalls past its lease; B finishes; the operator asks for a new draft and C
+    claims it. When A finally finishes, its result must be discarded."""
+    ctx = make_ctx()
+    await client.post("/webhooks/helpdesk", json=make_event())
+    stale = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=0)
+    takeover = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60)
+    await handle_generate_draft(ctx, takeover)
+    ticket = await get_ticket(sessionmaker)
+    assert ticket.status == TicketStatus.DRAFT_READY
+
+    await client.post(f"/api/tickets/{ticket.id}/regenerate")
+    fresh = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60)
+    assert fresh.attempts == stale.attempts  # same attempt number, different claim
+
+    await handle_generate_draft(ctx, stale)
+    ticket = await get_ticket(sessionmaker)
+    assert ticket.status == TicketStatus.NEW  # stale result discarded
+    assert ticket.draft_text is None
+
+    await handle_generate_draft(ctx, fresh)
+    ticket = await get_ticket(sessionmaker)
+    assert ticket.status == TicketStatus.DRAFT_READY
+
+
 async def test_stale_draft_is_not_written_after_regenerate(client, sessionmaker, make_ctx):
     """A generation job whose ticket left `new` (e.g. operator action) is a no-op."""
     await client.post("/webhooks/helpdesk", json=make_event())

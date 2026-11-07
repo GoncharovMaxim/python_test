@@ -63,6 +63,29 @@ async def test_expired_lease_is_reclaimed_and_stale_owner_is_fenced(sessionmaker
     assert (await _job(sessionmaker)).status == JobStatus.DONE
 
 
+async def test_stale_owner_is_fenced_after_job_was_reset_and_reclaimed(sessionmaker):
+    """ABA: re-enqueue resets `attempts`, so a fresh claim can have the same attempt number
+    as a long-dead one. Only a per-claim token tells them apart."""
+    ticket_id = await _make_ticket(sessionmaker)
+    stale = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=0)
+    takeover = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60)
+    async with sessionmaker.begin() as session:
+        assert await queue.mark_done(session, takeover)
+        await queue.enqueue(  # e.g. the operator asked for a new draft
+            session, kind=JobKind.GENERATE_DRAFT, ticket_id=ticket_id, max_attempts=3
+        )
+    fresh = await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, lease_seconds=60)
+    assert fresh.attempts == stale.attempts == 1
+
+    async with sessionmaker.begin() as session:
+        assert await queue.mark_done(session, stale) is False
+        assert await queue.mark_retry(session, stale, "late", 0) is False
+        assert await queue.mark_failed(session, stale, "late") is False
+    assert (await _job(sessionmaker)).status == JobStatus.RUNNING
+    async with sessionmaker.begin() as session:
+        assert await queue.mark_done(session, fresh) is True
+
+
 async def test_running_job_is_not_claimed_twice(sessionmaker):
     await _make_ticket(sessionmaker)
     assert await queue.claim(sessionmaker, JobKind.GENERATE_DRAFT, 60) is not None

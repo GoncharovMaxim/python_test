@@ -3,12 +3,15 @@
 - claim: `FOR UPDATE SKIP LOCKED`, so concurrent workers never get the same job. Claiming
   sets a lease (`available_at = now() + lease`); if the worker dies, the job becomes
   claimable again when the lease expires.
-- every finishing transition is fenced by the `attempts` value seen at claim time, so a
-  worker whose lease expired (and whose job was re-claimed) can't overwrite the result.
+- every claim issues a fresh random `lease_token`, and every finishing transition is
+  fenced by it. A worker whose lease expired (and whose job was re-claimed) can't
+  overwrite the new owner's result. `attempts` can't serve as the fence: re-enqueueing
+  resets it, so a fresh claim can repeat a stale claim's attempt number (ABA).
 - callers run finishing transitions in the same transaction as their ticket update.
 """
 
 import random
+import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -27,6 +30,7 @@ class ClaimedJob:
     ticket_id: int
     attempts: int  # including the current one
     max_attempts: int
+    lease_token: uuid.UUID  # proof of ownership for this claim only
 
     @property
     def is_last_attempt(self) -> bool:
@@ -53,6 +57,7 @@ async def enqueue(
             "max_attempts": stmt.excluded.max_attempts,
             "available_at": func.now(),
             "last_error": None,
+            "lease_token": None,
             "updated_at": func.now(),
         },
         where=Job.status.in_([JobStatus.DONE, JobStatus.FAILED]),
@@ -65,6 +70,7 @@ _CLAIM_SQL = text(
     UPDATE jobs
     SET status = 'running',
         attempts = attempts + 1,
+        lease_token = gen_random_uuid(),
         available_at = now() + make_interval(secs => :lease),
         updated_at = now()
     WHERE id = (
@@ -76,7 +82,7 @@ _CLAIM_SQL = text(
         LIMIT 1
         FOR UPDATE SKIP LOCKED
     )
-    RETURNING id, kind, ticket_id, attempts, max_attempts
+    RETURNING id, kind, ticket_id, attempts, max_attempts, lease_token
     """
 )
 
@@ -92,12 +98,20 @@ async def claim(
 
 
 def _owned(job: ClaimedJob):
-    return (Job.id == job.id) & (Job.status == JobStatus.RUNNING) & (Job.attempts == job.attempts)
+    return (
+        (Job.id == job.id)
+        & (Job.status == JobStatus.RUNNING)
+        & (Job.lease_token == job.lease_token)
+    )
 
 
 async def _finish(session: AsyncSession, job: ClaimedJob, **values) -> bool:
+    """Apply a finishing transition if this claim still owns the job. Clears the token."""
     result = await session.execute(
-        update(Job).where(_owned(job)).values(updated_at=func.now(), **values).returning(Job.id)
+        update(Job)
+        .where(_owned(job))
+        .values(updated_at=func.now(), lease_token=None, **values)
+        .returning(Job.id)
     )
     return result.scalar_one_or_none() is not None
 

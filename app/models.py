@@ -120,6 +120,8 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String(16), default=JobStatus.QUEUED)
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     max_attempts: Mapped[int] = mapped_column(Integer)
+    # New random value on every claim; finishing a job requires the token of that claim.
+    lease_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

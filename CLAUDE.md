@@ -45,8 +45,9 @@ tests/               pytest suite against a real Postgres
 2. **Idempotent intake.** Dedup by `event_id` (unique index + `ON CONFLICT DO NOTHING`).
    Concurrent duplicates must create exactly one ticket and one job.
 3. **Nothing in memory.** All background work goes through the `jobs` table. Claim with
-   `FOR UPDATE SKIP LOCKED` and a lease. Finishing a job is fenced by `attempts`, so a worker
-   whose lease expired cannot overwrite the new owner's result.
+   `FOR UPDATE SKIP LOCKED` and a lease. Every claim issues a fresh `lease_token`, and
+   finishing a job is fenced by it, so a worker whose lease expired cannot overwrite the new
+   owner's result. (`attempts` is not a valid fence: re-enqueueing resets it, which is the ABA problem.)
 4. **Global LLM rate limit.** Every LLM call (including stub mode) goes through
    `LLMClient`, which acquires the Postgres-backed sliding-window limiter
    (60 req/min across all worker processes).

@@ -55,7 +55,7 @@ Zendesk, Intercom тощо) і реалізуємо її в моку. Якщо �
 - `tickets`: одне звернення (одна подія вебхука). Поля чернетки (`draft_text`,
   `draft_sources`), фінальний текст (`reply_text`), `reply_idempotency_key`, статуси й часові мітки.
 - `jobs`: черга. `(ticket_id, kind)` унікальні. Поля: `status`, `attempts`, `max_attempts`,
-  `available_at`, `last_error`.
+  `available_at`, `lease_token`, `last_error`.
 - `kb_articles`: статті бази знань + згенерована колонка `search_vector tsvector` (GIN).
 - `llm_request_log`: журнал слотів rate limiter'а.
 
@@ -82,8 +82,11 @@ Zendesk, Intercom тощо) і реалізуємо її в моку. Якщо �
   WHERE id = (SELECT id ... WHERE status IN ('queued','running') AND available_at <= now()
   ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1)`. Для `running` поле `available_at`
   означає кінець lease, тож задачу «впалого» воркера автоматично підбере інший.
-- **Fencing:** завершення (`done` / retry / `failed`) робиться з умовою `attempts = :claimed_attempts`.
-  Воркер, у якого протух lease, нічого не перезапише.
+- **Fencing:** кожен claim видає новий випадковий `lease_token`. Завершення (`done` / retry /
+  `failed`) робиться з умовою `lease_token = :token_цього_claim` і скидає токен. Воркер, у якого
+  протух lease, нічого не перезапише, навіть якщо задачу встигли завершити, перезапустити
+  (regenerate скидає `attempts` у 0) і знову взяти з тим самим номером спроби. Тобто номер спроби
+  як fence не годиться через проблему ABA, а токен годиться.
 - Оновлення тікета й завершення задачі виконуються в одній транзакції.
 - Під час LLM-виклику з'єднання з БД не тримається.
 
