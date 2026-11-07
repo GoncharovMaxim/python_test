@@ -296,6 +296,7 @@ docs/                завдання та дизайн
 CLAUDE.md            правила для AI-агента
 .claude/agents/      субагенти: backend-engineer, test-engineer, software-architect
 .claude/rules/       стиль коду, типізація, лінтери (codestyle.md)
+.claude/skills/      навички агента: address-review (обробка зауважень ревʼю)
 ```
 
 ## Як я працював з агентом

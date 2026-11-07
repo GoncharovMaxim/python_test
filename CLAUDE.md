@@ -39,6 +39,7 @@ tests/               pytest suite against a real Postgres
 scripts/             repo tooling (blank-line-after-blocks pre-commit hook)
 .claude/agents/      subagents: backend-engineer, test-engineer, software-architect
 .claude/rules/       code style, typing and lint rules (codestyle.md)
+.claude/skills/      skills: address-review (work through code review remarks)
 ```
 
 ## Invariants: do not break these
