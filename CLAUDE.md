@@ -40,8 +40,10 @@ tests/               pytest suite against a real Postgres
 
 ## Invariants: do not break these
 
-1. **Webhook < 2 s.** The handler only validates and runs one short INSERT transaction.
-   Never call the LLM, KB search, or any HTTP from the request path.
+1. **Webhook < 2 s.** The handler only validates and runs one short INSERT transaction
+   under a single deadline (`WEBHOOK_TIMEOUT_SECONDS`, 1.5 s). The deadline covers waiting for
+   a pooled connection, connecting, statements, and commit. On timeout it answers 503 so the
+   helpdesk retries. Never call the LLM, KB search, or any HTTP from the request path.
 2. **Idempotent intake.** Dedup by `event_id` (unique index + `ON CONFLICT DO NOTHING`).
    Concurrent duplicates must create exactly one ticket and one job.
 3. **Nothing in memory.** All background work goes through the `jobs` table. Claim with

@@ -42,8 +42,10 @@ async def ingest_event(session: AsyncSession, event: IncomingEvent, settings: Se
     Concurrent deliveries of the same event serialize on the unique index: the second one
     waits for the first to commit and then inserts nothing.
     """
-    # Never hold the webhook longer than the helpdesk is willing to wait (2 s).
-    await session.execute(text("SET LOCAL statement_timeout = '1500ms'"))
+    # The caller enforces the total deadline client-side (incl. waiting for a connection);
+    # this makes Postgres abandon the work too, instead of finishing it for nobody.
+    timeout_ms = max(int(settings.webhook_timeout_seconds * 1000), 1)
+    await session.execute(text(f"SET LOCAL statement_timeout = {timeout_ms}"))
     stmt = (
         pg_insert(Ticket)
         .values(

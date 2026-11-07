@@ -1,8 +1,12 @@
 import asyncio
 import time
 
-from sqlalchemy import func, select
+import httpx
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
+from app.db import make_sessionmaker
+from app.main import create_app
 from app.models import Job, JobKind, JobStatus, Ticket, TicketStatus
 from tests.conftest import make_event
 
@@ -66,6 +70,58 @@ async def test_burst_of_distinct_events_is_fast_and_lossless(client, sessionmake
     assert all(r.status_code == 202 for r in responses)
     assert await _counts(sessionmaker) == (100, 100)
     assert elapsed < 10, f"100 concurrent webhooks took {elapsed:.1f}s"
+
+
+def _app_client(settings, sessionmaker, budget: float) -> httpx.AsyncClient:
+    app = create_app(
+        settings=settings.model_copy(update={"webhook_timeout_seconds": budget}),
+        sessionmaker=sessionmaker,
+    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+async def test_webhook_answers_503_in_time_when_no_db_connection_is_free(
+    database_url, settings, sessionmaker
+):
+    """Waiting for a pooled connection counts against the helpdesk's 2 s budget."""
+    engine = create_async_engine(database_url, pool_size=1, max_overflow=0)
+    try:
+        async with _app_client(settings, make_sessionmaker(engine), budget=0.3) as client:
+            async with engine.connect() as held:  # take the only connection
+                await held.execute(text("SELECT 1"))
+                started = time.monotonic()
+                response = await client.post("/webhooks/helpdesk", json=make_event())
+                elapsed = time.monotonic() - started
+            assert response.status_code == 503
+            assert elapsed < 1.0
+            # The helpdesk retries once the pool is free again: nothing was lost.
+            retry = await client.post("/webhooks/helpdesk", json=make_event())
+            assert retry.status_code == 202
+    finally:
+        await engine.dispose()
+    assert await _counts(sessionmaker) == (1, 1)
+
+
+async def test_webhook_answers_503_in_time_when_insert_is_blocked(engine, settings, sessionmaker):
+    """A statement stuck on a lock is cancelled at the budget; the connection stays usable."""
+    async with _app_client(settings, sessionmaker, budget=0.3) as client:
+        async with engine.connect() as blocker:
+            tx = await blocker.begin()
+            await blocker.execute(
+                text(
+                    "INSERT INTO tickets (event_id, external_ticket_id, customer_email, message,"
+                    " reply_url) VALUES ('evt_0001', 'T-1', 'a@b.c', 'm', 'https://x')"
+                )
+            )
+            started = time.monotonic()
+            response = await client.post("/webhooks/helpdesk", json=make_event())
+            elapsed = time.monotonic() - started
+            await tx.rollback()
+        assert response.status_code == 503
+        assert elapsed < 1.0
+        results = [await client.post("/webhooks/helpdesk", json=make_event()) for _ in range(3)]
+        assert [r.status_code for r in results] == [202, 200, 200]
+    assert await _counts(sessionmaker) == (1, 1)
 
 
 async def test_invalid_payload_is_rejected(client, sessionmaker):

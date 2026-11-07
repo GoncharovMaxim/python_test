@@ -140,7 +140,7 @@ Swagger з усіма ендпоінтами: http://localhost:8000/docs.
 | Метод | Шлях | Опис |
 |---|---|---|
 | `GET` | `/health` | `200 OK` |
-| `POST` | `/webhooks/helpdesk` | нове звернення: `202` прийнято, `200` дублікат, `422` невалідне тіло, `503` БД недоступна |
+| `POST` | `/webhooks/helpdesk` | нове звернення: `202` прийнято, `200` дублікат, `422` невалідне тіло, `503` не вдалося зберегти за 1.5 с (БД недоступна чи перевантажена) |
 | `GET` | `/ui/tickets` | UI оператора (фільтр `?status=`) |
 | `GET` | `/api/tickets?status=&limit=` | список звернень |
 | `GET` | `/api/tickets/{id}` | одне звернення |
@@ -160,8 +160,10 @@ Swagger з усіма ендпоінтами: http://localhost:8000/docs.
 Деталі в [docs/design.md](docs/design.md). Коротко:
 
 - **Вебхук відповідає за мілісекунди.** Він лише валідує тіло й виконує одну транзакцію
-  (`INSERT ticket ... ON CONFLICT (event_id) DO NOTHING` + `INSERT job`) з `statement_timeout`
-  1.5 с. LLM і пошук працюють у воркері.
+  (`INSERT ticket ... ON CONFLICT (event_id) DO NOTHING` + `INSERT job`). Усе збереження,
+  включно з очікуванням вільного з'єднання в пулі, обмежене одним дедлайном 1.5 с
+  (`WEBHOOK_TIMEOUT_SECONDS`). Якщо не встигли, відповідаємо `503`, і хелпдеск повторить
+  доставку. LLM і пошук працюють у воркері.
 - **Дублікати, зокрема одночасні**, відсікаються унікальним індексом на `event_id`. Друга транзакція
   чекає на індексі й нічого не вставляє. Відповідь у будь-якому разі 2xx, тож хелпдеск
   припиняє повтори.
@@ -204,6 +206,7 @@ Swagger з усіма ендпоінтами: http://localhost:8000/docs.
 | `LLM_SERVER_FALLBACKS` | `true` | `fallbacks: "default"` у запиті до Anthropic |
 | `GENERATION_CONCURRENCY` / `SEND_CONCURRENCY` | `30` / `10` | паралельність воркера |
 | `GENERATION_MAX_ATTEMPTS` / `SEND_MAX_ATTEMPTS` | `6` / `12` | ретраї |
+| `WEBHOOK_TIMEOUT_SECONDS` | `1.5` | загальний дедлайн збереження події у вебхуку (з очікуванням з'єднання з БД), після нього `503` |
 | `HELPDESK_TIMEOUT_SECONDS` | `10` | таймаут запиту до хелпдеску |
 | `REPLY_URL_ALLOWED_HOSTS` | `helpdesk-mock,helpdesk.example.com` у compose | allowlist хостів `reply_url` (захист від SSRF), порожньо = будь-які |
 | `KB_PUBLIC_BASE_URL` | `https://help.zvithub.example/articles` | база для посилань на статті |

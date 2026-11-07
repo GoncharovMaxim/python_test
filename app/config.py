@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     send_backoff_cap_seconds: float = 300.0
 
     # --- Helpdesk --------------------------------------------------------------------
+    # Total time the webhook may spend storing an event, including waiting for a pooled
+    # DB connection. The helpdesk gives up after 2 s; past this budget we answer 503 so
+    # it retries (a retry of an event that did get stored is answered "duplicate").
+    webhook_timeout_seconds: float = 1.5
     helpdesk_timeout_seconds: float = 10.0
     # Comma-separated host allowlist for `reply_url` (SSRF guard). Empty = allow any host.
     reply_url_allowed_hosts: str = ""
